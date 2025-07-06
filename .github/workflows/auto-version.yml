@@ -1,0 +1,139 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'README*.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'tests/**'
+
+jobs:
+  check-and-bump-version:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip-version]')"
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.8"
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install hatch gitpython
+        
+    - name: Check if version bump needed
+      id: check
+      run: |
+        python << 'EOF'
+        import subprocess
+        import re
+        from pathlib import Path
+        
+        # Get current version
+        result = subprocess.run(['hatch', 'version'], capture_output=True, text=True)
+        current_version = result.stdout.strip()
+        
+        # Get the last version tag
+        try:
+            result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'], 
+                                  capture_output=True, text=True)
+            last_tag = result.stdout.strip().lstrip('v')
+        except:
+            last_tag = "0.0.0"
+        
+        # Check if there are commits since last tag
+        result = subprocess.run(['git', 'rev-list', f'v{last_tag}..HEAD', '--count'], 
+                              capture_output=True, text=True)
+        commits_since_tag = int(result.stdout.strip()) if result.stdout.strip() else 0
+        
+        print(f"Current version: {current_version}")
+        print(f"Last tag: {last_tag}")
+        print(f"Commits since tag: {commits_since_tag}")
+        
+        # Determine bump type based on commit messages
+        result = subprocess.run(['git', 'log', f'v{last_tag}..HEAD', '--oneline'], 
+                              capture_output=True, text=True)
+        commit_messages = result.stdout.lower()
+        
+        bump_type = "patch"  # default
+        
+        if any(keyword in commit_messages for keyword in ['breaking', 'major', '!:']):
+            bump_type = "major"
+        elif any(keyword in commit_messages for keyword in ['feat', 'feature', 'minor']):
+            bump_type = "minor"
+        elif any(keyword in commit_messages for keyword in ['fix', 'patch', 'bug']):
+            bump_type = "patch"
+        
+        needs_bump = commits_since_tag > 0
+        
+        with open('GITHUB_OUTPUT', 'a') as f:
+            f.write(f"needs_bump={str(needs_bump).lower()}\n")
+            f.write(f"bump_type={bump_type}\n")
+            f.write(f"current_version={current_version}\n")
+            f.write(f"commits_since_tag={commits_since_tag}\n")
+        EOF
+        
+    - name: Bump version
+      if: steps.check.outputs.needs_bump == 'true'
+      id: bump
+      run: |
+        # Bump version using hatch
+        hatch version ${{ steps.check.outputs.bump_type }}
+        NEW_VERSION=$(hatch version)
+        
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "Bumped version from ${{ steps.check.outputs.current_version }} to $NEW_VERSION"
+        
+    - name: Commit version bump
+      if: steps.check.outputs.needs_bump == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        git add src/wireguard_manager/_version.py
+        git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }} [skip-version]"
+        git tag "v${{ steps.bump.outputs.new_version }}"
+        
+    - name: Push changes
+      if: steps.check.outputs.needs_bump == 'true'
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: main
+        tags: true
+        
+    - name: Create Release
+      if: steps.check.outputs.needs_bump == 'true'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: "v${{ steps.bump.outputs.new_version }}"
+        release_name: "Release v${{ steps.bump.outputs.new_version }}"
+        body: |
+          ## Changes in v${{ steps.bump.outputs.new_version }}
+          
+          This release was automatically created based on ${{ steps.check.outputs.commits_since_tag }} commits since the last release.
+          
+          **Bump type:** ${{ steps.check.outputs.bump_type }}
+          
+          ### Installation
+          
+          ```bash
+          pip install --upgrade wireguard-manager
+          ```
+          
+          ### Full Changelog
+          
+          See all changes at: https://github.com/${{ github.repository }}/compare/v${{ steps.check.outputs.current_version }}...v${{ steps.bump.outputs.new_version }}
+        draft: false
+        prerelease: false

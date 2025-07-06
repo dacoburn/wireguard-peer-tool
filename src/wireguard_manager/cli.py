@@ -4,50 +4,79 @@ WireGuard Manager CLI
 A modern, secure Python-based command-line tool for managing WireGuard VPN servers.
 """
 
-import os
-import sys
 import argparse
-import getpass
-import subprocess
-from pathlib import Path
 import base64
-import json
-import ipaddress
 import csv
+import getpass
+import ipaddress
+import json
+import os
 import shutil
-from typing import Union, Optional, Dict, Any, Tuple, List
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from wireguard_manager._version import __version__
-from wireguard_manager.db import DB, ServerConfig, PeerData
-from wireguard_manager.helper import Helper
+from . import db
+from ._version import __version__
+from .helper import Helper
 
-
-DB_PATH = "wg_manager.db"
+# Constants
 DEFAULT_DNS = "1.1.1.1"
-DEFAULT_CLIENT_DIR = "/etc/wireguard/clients"
-db: DB = DB(DB_PATH)
+DEFAULT_CLIENT_DIR = "./clients"
 
-MASTER_PASSWORD: Optional[str] = None
-MASTER_SALT: Optional[bytes] = None
+# Global variables for caching master password
+_master_password_cache: Optional[str] = None
+_salt_cache: Optional[bytes] = None
 
 
 def get_master_password_and_salt() -> Tuple[Optional[str], Optional[bytes]]:
-    """Get master password and salt from user or database, caching for session"""
-    global MASTER_PASSWORD, MASTER_SALT
-    if MASTER_PASSWORD is not None and MASTER_SALT is not None:
-        return MASTER_PASSWORD, MASTER_SALT
+    """Get master password and salt, caching for session"""
+    global _master_password_cache, _salt_cache
+    
+    # Return cached values if available
+    if _master_password_cache is not None and _salt_cache is not None:
+        return _master_password_cache, _salt_cache
+    
     config = db.get_server_config()
-    if not config:
+    if not config or not config.get("data_encrypted"):
         return None, None
-    is_encrypted = config.get("data_encrypted")
-    if not is_encrypted:
-        return None, None
-    salt_b64 = config.get("encryption_salt")
-    salt = base64.b64decode(salt_b64) if salt_b64 else None
-    password = getpass.getpass("Enter master password: ")
-    MASTER_PASSWORD = password
-    MASTER_SALT = salt
-    return MASTER_PASSWORD, MASTER_SALT
+    
+    # Get salt from database
+    encoded_salt = config.get("encryption_salt")
+    if not encoded_salt:
+        print("Error: Database is encrypted but no salt found")
+        sys.exit(1)
+    
+    try:
+        salt = base64.b64decode(encoded_salt)
+    except Exception as e:
+        print(f"Error decoding salt: {e}")
+        sys.exit(1)
+    
+    # Prompt for master password
+    master_password = getpass.getpass("Enter master password: ")
+    
+    # Cache the values
+    _master_password_cache = master_password
+    _salt_cache = salt
+    
+    return master_password, salt
+
+
+def needs_elevated_permissions(command: str) -> bool:
+    """Check if a command needs elevated permissions"""
+    elevated_commands = {
+        'add-peer', 'remove-peer', 'restart-wireguard', 
+        'regenerate-wg-conf', 'import-peers', 'repair-peer-zips'
+    }
+    return command in elevated_commands
+
+
+def suggest_sudo_usage():
+    """Suggest using sudo for elevated commands"""
+    print("\nTip: Try running this command with sudo:")
+    print(f"  sudo {' '.join(sys.argv)}")
 
 
 def encrypt_peer_data(
@@ -194,142 +223,6 @@ AllowedIPs = {peer['ip_address']}/32
         sys.exit(1)
 
 
-def init(args: argparse.Namespace) -> None:
-    """Initialize WireGuard manager from existing config file"""
-    config_path = input("Enter path to existing WireGuard config file: ").strip()
-    
-    if not os.path.exists(config_path):
-        print(f"Error: Config file '{config_path}' does not exist")
-        sys.exit(1)
-
-    # Read and parse config
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-    except Exception as e:
-        print(f"Error reading config file: {e}")
-        sys.exit(1)
-
-    # Parse config using Helper
-    try:
-        parsed_config = Helper.parse_wireguard_config(content)
-    except Exception as e:
-        print(f"Error parsing WireGuard config: {e}")
-        sys.exit(1)
-
-    # Get server section
-    server_section = parsed_config.get("Interface", {})
-    if not server_section:
-        print("Error: No [Interface] section found in config")
-        sys.exit(1)
-
-    # Extract server config
-    private_key = server_section.get("PrivateKey")
-    address = server_section.get("Address")
-    listen_port = server_section.get("ListenPort", "51820")
-
-    if not private_key or not address:
-        print("Error: Missing PrivateKey or Address in [Interface] section")
-        sys.exit(1)
-
-    # Generate public key from private key
-    try:
-        public_key_result = subprocess.run(
-            ["wg", "pubkey"], input=private_key, capture_output=True, text=True, check=False
-        )
-        if public_key_result.returncode != 0:
-            print("Error generating public key from private key")
-            sys.exit(1)
-        public_key = public_key_result.stdout.strip()
-    except Exception as e:
-        print(f"Error generating public key: {e}")
-        sys.exit(1)
-
-    # Ask for encryption
-    use_encryption = input("Enable database encryption? (y/N): ").strip().lower() == 'y'
-    master_password = None
-    salt = None
-
-    if use_encryption:
-        password1 = getpass.getpass("Enter master password: ")
-        password2 = getpass.getpass("Confirm master password: ")
-        if password1 != password2:
-            print("Error: Passwords don't match")
-            sys.exit(1)
-        master_password = password1
-        salt = Helper.generate_salt()
-
-    # Prepare server config
-    server_config = {
-        "private_key": private_key,
-        "public_key": public_key,
-        "address": address,
-        "listen_port": int(listen_port),
-        "config_path": config_path,
-        "dns_server": dns_server,
-        "client_config_root": client_root,
-        "post_up": server_section.get("PostUp"),
-        "post_down": server_section.get("PostDown"),
-        "data_encrypted": use_encryption,
-        "encryption_salt": base64.b64encode(salt).decode() if salt else None
-    }
-
-    # Encrypt sensitive fields if encryption is enabled
-    if use_encryption and master_password and salt:
-        for key in ["private_key", "public_key"]:
-            if key in server_config and server_config[key]:
-                server_config[key] = Helper.encrypt_database_field(
-                    server_config[key], master_password, salt
-                )
-
-    # Save to database
-    try:
-        db.save_server_config(server_config)
-        print("Server configuration initialized successfully")
-    except Exception as e:
-        print(f"Error saving server config: {e}")
-        sys.exit(1)
-
-    # Import existing peers
-    peers_section = parsed_config.get("Peer", [])
-    if peers_section:
-        print(f"Found {len(peers_section)} existing peers. Importing...")
-        for i, peer_config in enumerate(peers_section):
-            peer_name = peer_config.get("name", f"peer_{i+1}")
-            public_key = peer_config.get("PublicKey")
-            allowed_ips = peer_config.get("AllowedIPs")
-            
-            if public_key and allowed_ips:
-                # Extract IP (remove /32 suffix)
-                ip_address = allowed_ips.split('/')[0]
-                
-                # Generate private key for this peer (we don't have it from config)
-                private_key, _ = generate_keypair()
-                
-                # Generate ZIP password
-                zip_password = Helper.generate_zip_password()
-                
-                peer_data = {
-                    "name": peer_name,
-                    "public_key": public_key,
-                    "private_key": private_key,  # Note: This is newly generated
-                    "ip_address": ip_address,
-                    "zip_password": zip_password
-                }
-
-                # Encrypt peer data if encryption is enabled
-                if use_encryption and master_password and salt:
-                    peer_data = encrypt_peer_data(peer_data, master_password, salt)
-
-                try:
-                    db.add_peer(peer_data)
-                    print(f"Imported peer: {peer_name} ({ip_address})")
-                except Exception as e:
-                    print(f"Error importing peer {peer_name}: {e}")
-
-    print("Initialization complete!")
-
-
 def get_next_ip() -> str:
     """Get next available IP address for a new peer"""
     config = db.get_server_config()
@@ -387,96 +280,6 @@ def generate_keypair() -> Tuple[str, str]:
     public_key = public_key_result.stdout.strip()
 
     return private_key, public_key
-
-
-def decrypt_server_config(config_row: dict) -> dict:
-    """Decrypt server config if encryption is enabled. Always returns a dict."""
-    if not config_row:
-        return {}
-    if not isinstance(config_row, dict):
-        raise TypeError(f"Server config must be a dict. Got: {type(config_row)}")
-
-    is_encrypted = config_row.get("data_encrypted")
-    if not is_encrypted:
-        return config_row
-
-    master_password, _ = get_master_password_and_salt()
-    if not master_password:
-        return config_row
-
-    config = config_row.copy()
-    for key in ["private_key", "public_key"]:
-        if key in config and config[key]:
-            try:
-                config[key] = Helper.decrypt_database_field(config[key], master_password)
-            except (ValueError, KeyError, json.JSONDecodeError):
-                print("Error: Invalid master password or corrupted data")
-                sys.exit(1)
-    return config
-
-
-def auto_regenerate_wg_config():
-    """Auto-regenerate WireGuard config after peer changes"""
-    config = db.get_server_config()
-    if not config:
-        return
-    
-    config_path = config.get("config_path")
-    if config_path and os.path.exists(config_path):
-        print(f"Auto-regenerating WireGuard config: {config_path}")
-        generate_wg_conf_content(config_path)
-
-
-def generate_wg_conf_content(output_path: Optional[str] = None) -> None:
-    """Generate WireGuard configuration file content from database"""
-    config = db.get_server_config()
-    if not config:
-        print("Server not initialized. Run 'init' first.")
-        sys.exit(1)
-
-    # Decrypt config if needed
-    config = decrypt_server_config(config)
-
-    if output_path is None:
-        output_path = config.get("config_path")
-    if not output_path:
-        print("Error: No output path specified and no config path in database")
-        sys.exit(1)
-
-    # Build WireGuard config content
-    content = f"""[Interface]
-PrivateKey = {config['private_key']}
-Address = {config['address']}
-ListenPort = {config.get('listen_port', 51820)}
-"""
-
-    # Add PostUp and PostDown if they exist
-    if config.get('post_up'):
-        content += f"PostUp = {config['post_up']}\n"
-    if config.get('post_down'):
-        content += f"PostDown = {config['post_down']}\n"
-
-    # Add peers
-    peers = db.get_all_peers()
-    master_password, _ = get_master_password_and_salt()
-    
-    for peer_row in peers:
-        peer = decrypt_peer_data(peer_row, master_password)
-        content += f"""
-[Peer]
-# {peer['name']}
-PublicKey = {peer['public_key']}
-AllowedIPs = {peer['ip_address']}/32
-"""
-
-    # Write to file
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"WireGuard configuration written to: {output_path}")
-    except Exception as e:
-        print(f"Error writing configuration file: {e}")
-        sys.exit(1)
 
 
 def init(args: argparse.Namespace) -> None:
@@ -991,7 +794,6 @@ def check_config_file_access() -> Tuple[bool, str]:
         return False, f"Error accessing config file: {e}"
 
 
-# === Version Command ===
 def version_command(_args: argparse.Namespace) -> None:
     """Display version information"""
     print(f"WireGuard Peer Tool {__version__}")

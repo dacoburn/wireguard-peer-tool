@@ -252,3 +252,86 @@ class DB:
             cursor.execute("UPDATE peers SET allowed_ips = ? WHERE name = ?", (new_allowed_ips, peer_name))
             conn.commit()
             return True
+
+# Global database instance
+_db_instance = None
+
+def get_db_instance():
+    """Get or create the global database instance"""
+    global _db_instance
+    if _db_instance is None:
+        db_path = os.path.join(os.getcwd(), "wg_manager.db")
+        _db_instance = DB(db_path)
+    return _db_instance
+
+# Wrapper functions for CLI compatibility
+def get_server_config():
+    """Get server configuration from database"""
+    return get_db_instance().get_server_config()
+
+def save_server_config(server_config: dict):
+    """Save server configuration to database"""
+    db_instance = get_db_instance()
+    
+    # Convert dict to ServerConfig object
+    config_obj = ServerConfig(
+        config_path=server_config.get("config_path", ""),
+        interface_name=server_config.get("interface_name", "wg0"),
+        address=server_config.get("address", ""),
+        listen_port=server_config.get("listen_port", 51820),
+        private_key=server_config.get("private_key", ""),
+        public_key=server_config.get("public_key", ""),
+        post_up=server_config.get("post_up", ""),
+        post_down=server_config.get("post_down", ""),
+        table=server_config.get("table", ""),
+        dns=server_config.get("dns_server", "1.1.1.1"),
+        client_root=server_config.get("client_config_root", "./clients"),
+        data_encrypted=1 if server_config.get("data_encrypted") else 0,
+        encryption_salt=server_config.get("encryption_salt"),
+        endpoint=server_config.get("endpoint", "")
+    )
+    
+    if db_instance.check_if_server_config_exists():
+        # Update existing config
+        updates = {k: v for k, v in server_config.items() if v is not None}
+        db_instance.update_server_config(updates)
+    else:
+        # Insert new config
+        db_instance.insert_server_config(config_obj)
+
+def update_server_config(key: str, value):
+    """Update a single server configuration value"""
+    get_db_instance().update_server_config({key: value})
+
+def get_all_peers():
+    """Get all peers from database"""
+    return get_db_instance().get_peers_list()
+
+def get_peer_by_name(name: str):
+    """Get peer by name from database"""
+    return get_db_instance().get_peer_by_name(name)
+
+def get_ips():
+    """Get all peer IPs from database"""
+    return get_db_instance().get_ips()
+
+def add_peer(peer_data: dict):
+    """Add a peer to the database"""
+    db_instance = get_db_instance()
+    
+    # Convert dict to PeerData object
+    peer_obj = PeerData(
+        name=peer_data["name"],
+        public_key=peer_data["public_key"],
+        private_key=peer_data["private_key"],
+        ip_address=peer_data["ip_address"],
+        allowed_ips=peer_data.get("allowed_ips", f"{peer_data['ip_address']}/32"),
+        zip_path=Path("./clients") / peer_data["name"] / f"{peer_data['name']}.zip",
+        zip_password=peer_data["zip_password"]
+    )
+    
+    db_instance.insert_peer_to_db(peer_obj)
+
+def remove_peer(name: str):
+    """Remove a peer from the database"""
+    return get_db_instance().remove_peer_from_db(name)

@@ -437,65 +437,81 @@ AllowedIPs = {allowed_ip}
 
         return zip_password
 
-    # === Encryption ===
     @staticmethod
-    def derive_key(password: str, salt: bytes) -> bytes:
-        """Derive encryption key from password and salt"""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100_000,
-            backend=default_backend()
-        )
-        return base64.urlsafe_b64encode(kdf.derive(password.encode()))
+    def generate_salt() -> bytes:
+        """Generate a random salt for encryption"""
+        return secrets.token_bytes(32)
+    
+    @staticmethod
+    def generate_client_config(peer_name: str, db_module):
+        """Generate client configuration files and ZIP package"""
+        # Get peer data from database
+        peer_row = db_module.get_peer_by_name(peer_name)
+        if not peer_row:
+            raise ValueError(f"Peer '{peer_name}' not found")
+        
+        # Get server config
+        server_config = db_module.get_server_config()
+        if not server_config:
+            raise ValueError("Server not initialized")
+        
+        # Decrypt server config if encrypted
+        from . import cli  # Import here to avoid circular import
+        server_config = cli.decrypt_server_config(server_config)
+        
+        # Decrypt peer data if encrypted
+        master_password, _ = cli.get_master_password_and_salt()
+        peer = cli.decrypt_peer_data(peer_row, master_password)
+        
+        # Create client directory
+        client_root = server_config.get("client_config_root", "./clients")
+        peer_dir = Path(client_root) / peer_name
+        peer_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create client config content
+        client_config_content = f"""[Interface]
+PrivateKey = {peer['private_key']}
+Address = {peer['ip_address']}/32
+DNS = {server_config.get('dns_server', '1.1.1.1')}
 
+[Peer]
+PublicKey = {server_config['public_key']}
+AllowedIPs = 0.0.0.0/0
+Endpoint = {server_config.get('endpoint', 'your-server.com')}:{server_config.get('listen_port', 51820)}
+"""
+        
+        # Write config file
+        config_file = peer_dir / f"{peer_name}.conf"
+        config_file.write_text(client_config_content, encoding='utf-8')
+        
+        # Create QR code
+        qr_file = peer_dir / f"{peer_name}.png"
+        Helper.create_qr_code(peer_dir, peer_name, client_config_content)
+        
+        # Write key files
+        public_key_file = peer_dir / f"{peer_name}.pub"
+        public_key_file.write_text(peer['public_key'], encoding='utf-8')
+        
+        private_key_file = peer_dir / f"{peer_name}.key"
+        private_key_file.write_text(peer['private_key'], encoding='utf-8')
+        
+        # Create ZIP file
+        zip_file = peer_dir / f"{peer_name}.zip"
+        files_to_zip = [config_file, qr_file, public_key_file, private_key_file]
+        Helper.create_password_protected_zip(zip_file, files_to_zip, peer['zip_password'])
+        
+        return zip_file
+    
     @staticmethod
-    def encrypt_data(data: str, password: str, salt: Optional[bytes] = None) -> Dict[str, str]:
-        """Encrypt data with password"""
-        if salt is None:
-            salt = os.urandom(16)
-        key = Helper.derive_key(password, salt)
-        f = Fernet(key)
-        encrypted = f.encrypt(data.encode())
-        return {
-            "salt": base64.b64encode(salt).decode(),
-            "data": encrypted.decode()
-        }
-
-    @staticmethod
-    def decrypt_data(enc_data: Dict[str, str], password: str) -> str:
-        """Decrypt data with password"""
-        salt = base64.b64decode(enc_data["salt"])
-        key = Helper.derive_key(password, salt)
-        f = Fernet(key)
-        return f.decrypt(enc_data["data"].encode()).decode()
-
-    @staticmethod
-    def generate_zip_password(length: int = 16) -> str:
-        """Generate a random password for ZIP files"""
-        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-        return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-    # === Database Encryption ===
-    @staticmethod
-    def encrypt_database_field(data: str, master_password: str, salt: bytes) -> str:
-        """Encrypt a database field using the master password"""
-        encrypted = Helper.encrypt_data(data, master_password, salt)
-        return json.dumps(encrypted)
-
-    @staticmethod
-    def decrypt_database_field(enc_json: str, master_password: str) -> str:
-        """Decrypt a database field using the master password, only if actually encrypted"""
-        if not isinstance(enc_json, str):
-            return enc_json
-        enc_json_stripped = enc_json.strip()
-        # Only decrypt if it looks like a JSON object with 'data' and 'salt'
+    def check_peer_zip_exists(peer_name: str, db_module) -> bool:
+        """Check if a peer's ZIP file exists"""
         try:
-            enc_data = json.loads(enc_json_stripped)
-            if isinstance(enc_data, dict) and 'data' in enc_data and 'salt' in enc_data:
-                return Helper.decrypt_data(enc_data, master_password)
-            else:
-                return enc_json
-        except (json.JSONDecodeError, TypeError):
-            return enc_json
+            server_config = db_module.get_server_config()
+            if not server_config:
+                return False
+            
+            client_root = server_config.get("client_config_root", "./clients")
+            zip_file = Path(client_root) / peer_name / f"{peer_name}.zip"
+            return zip_file.exists()
+        except Exception:
+            return False

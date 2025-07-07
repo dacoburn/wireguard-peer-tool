@@ -64,7 +64,7 @@ def get_master_password_and_salt() -> tuple[str | None, bytes | None]:
 def needs_elevated_permissions(command: str) -> bool:
     """Check if a command needs elevated permissions"""
     elevated_commands = {
-        "add-peer", "remove-peer", "restart-wireguard",
+        "add-peer", "remove-peer", "restart-wireguard", "sync-peers",
         "regenerate-wg-conf", "import-peers", "repair-peer-zips"
     }
     return command in elevated_commands
@@ -188,6 +188,110 @@ def decrypt_server_config(config_row: dict) -> dict:
             except (ValueError, KeyError, json.JSONDecodeError):
                 sys.exit(1)
     return config
+
+
+def get_wireguard_interface_name() -> str | None:
+    """Get the WireGuard interface name from config"""
+    config = db.get_server_config()
+    if not config:
+        return None
+    
+    config_path = config.get("config_path")
+    if not config_path:
+        return None
+    
+    # Extract interface name from config path
+    return Path(config_path).stem
+
+
+def add_peer_to_wireguard_interface(peer_public_key: str, allowed_ips: str) -> bool:
+    """Add a peer to the running WireGuard interface without restart"""
+    interface_name = get_wireguard_interface_name()
+    if not interface_name:
+        return False
+    
+    try:
+        # Use wg set to add the peer dynamically
+        subprocess.run([
+            "wg", "set", interface_name,
+            "peer", peer_public_key,
+            "allowed-ips", allowed_ips
+        ], check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+    except Exception:
+        return False
+
+
+def remove_peer_from_wireguard_interface(peer_public_key: str) -> bool:
+    """Remove a peer from the running WireGuard interface without restart"""
+    interface_name = get_wireguard_interface_name()
+    if not interface_name:
+        return False
+    
+    try:
+        # Use wg set to remove the peer dynamically
+        subprocess.run([
+            "wg", "set", interface_name,
+            "peer", peer_public_key,
+            "remove"
+        ], check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+    except Exception:
+        return False
+
+
+def sync_all_peers_to_wireguard_interface() -> bool:
+    """Sync all database peers to the running WireGuard interface"""
+    interface_name = get_wireguard_interface_name()
+    if not interface_name:
+        return False
+    
+    # Get current WireGuard peers
+    try:
+        result = subprocess.run([
+            "wg", "show", interface_name, "peers"
+        ], check=True, capture_output=True, text=True)
+        current_wg_peers = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+    except subprocess.CalledProcessError:
+        return False
+    except Exception:
+        return False
+    
+    # Get all peers from database
+    peers = db.get_all_peers()
+    master_password, _ = get_master_password_and_salt()
+    
+    # Get database peer public keys
+    db_peer_keys = set()
+    for peer_row in peers:
+        peer = decrypt_peer_data(peer_row, master_password)
+        public_key = peer.get("public_key")
+        if public_key:
+            db_peer_keys.add(public_key)
+    
+    # Remove peers that are in WireGuard but not in database
+    removed_count = 0
+    for wg_peer_key in current_wg_peers:
+        if wg_peer_key and wg_peer_key not in db_peer_keys:
+            if remove_peer_from_wireguard_interface(wg_peer_key):
+                removed_count += 1
+    
+    # Add/update peers from database
+    added_count = 0
+    for peer_row in peers:
+        peer = decrypt_peer_data(peer_row, master_password)
+        public_key = peer.get("public_key")
+        allowed_ips = peer.get("allowed_ips", f"{peer.get('ip_address')}/32")
+        
+        if public_key:
+            if add_peer_to_wireguard_interface(public_key, allowed_ips):
+                added_count += 1
+    
+    return added_count == len(peers)
 
 
 def auto_regenerate_wg_config():
@@ -502,16 +606,32 @@ def add_peer(args: argparse.Namespace) -> None:
     auto_regenerate_wg_config()
     print("Updated WireGuard server configuration")
 
+    # Add peer to running WireGuard interface without restart
+    allowed_ips = f"{ip_address}/32"
+    if add_peer_to_wireguard_interface(public_key, allowed_ips):
+        print(f"Added peer '{peer_name}' to running WireGuard interface")
+    else:
+        print(f"Warning: Failed to add peer '{peer_name}' to running WireGuard interface")
+
+    # Dynamically add peer to running WireGuard interface
+    if not add_peer_to_wireguard_interface(public_key, f"{ip_address}/32"):
+        print("Warning: Failed to add peer to running WireGuard interface")
+
 
 def remove_peer(args: argparse.Namespace) -> None:
     """Remove a peer"""
     peer_name = args.name
 
-    # Check if peer exists
+    # Check if peer exists and get its public key before removing
     peer_row = db.get_peer_by_name(peer_name)
     if not peer_row:
         print(f"Error: Peer '{peer_name}' not found.")
         sys.exit(1)
+
+    # Decrypt peer data to get public key
+    master_password, _ = get_master_password_and_salt()
+    peer = decrypt_peer_data(peer_row, master_password)
+    peer_public_key = peer.get("public_key")
 
     # Remove from database
     try:
@@ -536,6 +656,17 @@ def remove_peer(args: argparse.Namespace) -> None:
     # Auto-regenerate WireGuard config
     auto_regenerate_wg_config()
     print("Updated WireGuard server configuration")
+
+    # Remove peer from running WireGuard interface without restart
+    if peer_public_key and remove_peer_from_wireguard_interface(peer_public_key):
+        print(f"Removed peer '{peer_name}' from running WireGuard interface")
+    else:
+        print(f"Warning: Failed to remove peer '{peer_name}' from running WireGuard interface")
+
+    # Dynamically remove peer from running WireGuard interface
+    public_key = peer_row.get("public_key")
+    if public_key and not remove_peer_from_wireguard_interface(public_key):
+        print("Warning: Failed to remove peer from running WireGuard interface")
 
 
 def list_peers(_args: argparse.Namespace) -> None:
@@ -649,7 +780,6 @@ def restart_wireguard(_args: argparse.Namespace) -> None:
     # Extract interface name from config path
     interface_name = Path(config_path).stem
 
-
     # Stop interface
     try:
         subprocess.run(["wg-quick", "down", interface_name], check=True)
@@ -659,7 +789,78 @@ def restart_wireguard(_args: argparse.Namespace) -> None:
     # Start interface
     try:
         subprocess.run(["wg-quick", "up", config_path], check=True)
+        print(f"Successfully restarted WireGuard interface '{interface_name}'")
     except subprocess.CalledProcessError:
+        sys.exit(1)
+
+
+def sync_peers_to_interface(_args: argparse.Namespace) -> None:
+    """Sync all database peers to the running WireGuard interface without restart"""
+    interface_name = get_wireguard_interface_name()
+    if not interface_name:
+        print("Error: Could not determine WireGuard interface name")
+        sys.exit(1)
+    
+    # Get current WireGuard peers
+    try:
+        result = subprocess.run([
+            "wg", "show", interface_name, "peers"
+        ], check=True, capture_output=True, text=True)
+        current_wg_peers = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+    except subprocess.CalledProcessError:
+        print("Error: Failed to get current WireGuard peers")
+        sys.exit(1)
+    except Exception:
+        print("Error: Failed to get current WireGuard peers")
+        sys.exit(1)
+    
+    # Get all peers from database
+    peers = db.get_all_peers()
+    master_password, _ = get_master_password_and_salt()
+    
+    # Get database peer public keys
+    db_peer_keys = set()
+    db_peer_names = {}  # Map public key to name for reporting
+    for peer_row in peers:
+        peer = decrypt_peer_data(peer_row, master_password)
+        public_key = peer.get("public_key")
+        if public_key:
+            db_peer_keys.add(public_key)
+            db_peer_names[public_key] = peer.get("name", "unknown")
+    
+    # Remove peers that are in WireGuard but not in database
+    removed_count = 0
+    for wg_peer_key in current_wg_peers:
+        if wg_peer_key and wg_peer_key not in db_peer_keys:
+            if remove_peer_from_wireguard_interface(wg_peer_key):
+                print(f"Removed orphaned peer: {wg_peer_key[:16]}...")
+                removed_count += 1
+            else:
+                print(f"Warning: Failed to remove orphaned peer: {wg_peer_key[:16]}...")
+    
+    # Add/update peers from database
+    added_count = 0
+    for peer_row in peers:
+        peer = decrypt_peer_data(peer_row, master_password)
+        public_key = peer.get("public_key")
+        allowed_ips = peer.get("allowed_ips", f"{peer.get('ip_address')}/32")
+        peer_name = peer.get("name", "unknown")
+        
+        if public_key:
+            if add_peer_to_wireguard_interface(public_key, allowed_ips):
+                added_count += 1
+            else:
+                print(f"Warning: Failed to add/update peer '{peer_name}' to WireGuard interface")
+    
+    # Report results
+    print(f"Sync completed:")
+    print(f"  - Removed {removed_count} orphaned peer(s)")
+    print(f"  - Added/updated {added_count}/{len(peers)} database peer(s)")
+    
+    if added_count == len(peers) and removed_count >= 0:
+        print("Successfully synced all peers to running WireGuard interface")
+    else:
+        print("Warning: Not all peers were successfully synced")
         sys.exit(1)
 
 
@@ -718,6 +919,7 @@ def import_peers(args: argparse.Namespace) -> None:
     imported_count = 0
     skipped_count = 0
     total_peers = len(peer_data)
+    imported_peers = []  # Track successfully imported peers for WireGuard sync
 
     print(f"Importing {total_peers} peer(s) from '{file_path}'...")
 
@@ -729,6 +931,9 @@ def import_peers(args: argparse.Namespace) -> None:
                 skipped_count += 1
                 continue
 
+            # Store original data for WireGuard sync
+            original_peer_data = peer.copy()
+
             # Encrypt if needed
             if master_password and salt:
                 peer = encrypt_peer_data(peer, master_password, salt)
@@ -736,6 +941,7 @@ def import_peers(args: argparse.Namespace) -> None:
             db.add_peer(peer)
             print(f"  ✓ Imported peer '{peer['name']}'")
             imported_count += 1
+            imported_peers.append(original_peer_data)
         except Exception:
             print(f"  ✗ Failed to import peer '{peer.get('name', 'unknown')}'")
 
@@ -745,6 +951,20 @@ def import_peers(args: argparse.Namespace) -> None:
     if imported_count > 0:
         auto_regenerate_wg_config()
         print("Updated WireGuard server configuration")
+
+        # Add imported peers to running WireGuard interface without restart
+        wg_success_count = 0
+        for peer_data in imported_peers:
+            public_key = peer_data.get("public_key")
+            allowed_ips = peer_data.get("allowed_ips", f"{peer_data.get('ip_address')}/32")
+            
+            if public_key and add_peer_to_wireguard_interface(public_key, allowed_ips):
+                wg_success_count += 1
+
+        if wg_success_count > 0:
+            print(f"Added {wg_success_count}/{imported_count} imported peers to running WireGuard interface")
+        if wg_success_count < imported_count:
+            print(f"Warning: {imported_count - wg_success_count} peers failed to be added to running WireGuard interface")
 
 
 def peer_zip_info(_args: argparse.Namespace) -> None:
@@ -807,6 +1027,152 @@ def debug_peer_data(args: argparse.Namespace) -> None:
                         pass
 
 
+def _regenerate_public_key_from_private(private_key_encrypted: str, master_password: str) -> str | None:
+    """Regenerate public key from encrypted private key"""
+    try:
+        private_key_plain = Helper.decrypt_database_field(
+            private_key_encrypted, master_password
+        )
+        
+        # Check if we got a valid WireGuard private key (44 chars, base64-like)
+        if (private_key_plain and
+            len(private_key_plain) == 44 and
+            private_key_plain != private_key_encrypted and
+            not private_key_plain.startswith("{")):
+            
+            # Successfully decrypted private key, regenerate public key
+            result = subprocess.run([
+                "wg", "pubkey"
+            ], input=private_key_plain,
+               capture_output=True, text=True,
+               check=False)
+
+            if result.returncode == 0:
+                return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _repair_unencrypted_field(peer_name: str, field_name: str, field_value: str, 
+                             master_password: str, peer_data: dict) -> bool:
+    """Repair a field that should not be encrypted but appears to be"""
+    needs_repair = False
+    
+    try:
+        decrypted_value = Helper.decrypt_database_field(field_value, master_password)
+
+        # Check if decryption actually worked
+        decryption_worked = (
+            decrypted_value != field_value and
+            not decrypted_value.startswith("{") and
+            len(decrypted_value) > 0
+        )
+
+        if not decryption_worked:
+            # Decryption failed, handle special case for public_key
+            if field_name == "public_key":
+                private_key_encrypted = peer_data.get("private_key", "")
+                if private_key_encrypted:
+                    regenerated_public_key = _regenerate_public_key_from_private(
+                        private_key_encrypted, master_password
+                    )
+                    if regenerated_public_key:
+                        db.update_peer_field(peer_name, field_name, regenerated_public_key)
+                        needs_repair = True
+        else:
+            # Decryption worked, update the database with the decrypted value
+            db.update_peer_field(peer_name, field_name, decrypted_value)
+            needs_repair = True
+
+    except Exception:
+        pass
+    
+    return needs_repair
+
+
+def _repair_encrypted_field(peer_name: str, field_name: str, field_value: str,
+                           master_password: str, salt: bytes) -> bool:
+    """Repair a field that should be encrypted"""
+    needs_repair = False
+    
+    # Check if this field is unencrypted (doesn't start with JSON format)
+    if (isinstance(field_value, str) and
+        not field_value.strip().startswith("{")):
+        
+        # Encrypt the field
+        try:
+            encrypted_value = Helper.encrypt_database_field(
+                field_value, master_password, salt
+            )
+            db.update_peer_field(peer_name, field_name, encrypted_value)
+            needs_repair = True
+        except Exception:
+            pass
+            
+    elif field_value.strip().startswith("{"):
+        # Try to verify it's properly encrypted and can be decrypted
+        try:
+            decrypted = Helper.decrypt_database_field(field_value, master_password)
+            
+            # Check if decryption actually worked
+            if not (decrypted != field_value and
+                   not decrypted.startswith("{") and
+                   len(decrypted) > 0):
+                
+                # Try to fix this encrypted field that can't be decrypted
+                if field_name == "private_key":
+                    try:
+                        # Generate new keypair
+                        new_private_key, new_public_key = generate_keypair()
+
+                        # Encrypt the new private key
+                        encrypted_private_key = Helper.encrypt_database_field(
+                            new_private_key, master_password, salt
+                        )
+
+                        # Update database with new private key
+                        db.update_peer_keys(
+                            peer_name, encrypted_private_key, new_public_key
+                        )
+                        needs_repair = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
+    return needs_repair
+
+
+def _repair_peer_encryption(peer_data: dict, master_password: str, salt: bytes) -> bool:
+    """Repair encryption issues for a single peer"""
+    peer_name = peer_data.get("name", "unknown")
+    needs_repair = False
+    
+    # Fields that should be encrypted and unencrypted
+    encrypted_fields = ["private_key", "ip_address", "allowed_ips", "zip_password"]
+    unencrypted_fields = ["name", "public_key", "created_at", "dns", "endpoint"]
+
+    # Check fields that should NOT be encrypted
+    for field_name in unencrypted_fields:
+        if peer_data.get(field_name):
+            field_value = peer_data[field_name]
+            if isinstance(field_value, str) and field_value.strip().startswith("{"):
+                if _repair_unencrypted_field(peer_name, field_name, field_value, 
+                                           master_password, peer_data):
+                    needs_repair = True
+
+    # Check fields that should be encrypted
+    for field_name in encrypted_fields:
+        if peer_data.get(field_name):
+            field_value = peer_data[field_name]
+            if _repair_encrypted_field(peer_name, field_name, field_value,
+                                     master_password, salt):
+                needs_repair = True
+
+    return needs_repair
+
+
 def repair_database_encryption(args: argparse.Namespace) -> None:
     """Repair database encryption issues by encrypting unencrypted fields"""
 
@@ -819,180 +1185,15 @@ def repair_database_encryption(args: argparse.Namespace) -> None:
     if not master_password or not salt:
         sys.exit(1)
 
-
     # Get all peers and check/fix encryption
     peers = db.get_all_peers_raw()
-
     repaired_count = 0
-
-    # Fields that should be encrypted:
-    # - private_key (encrypted)
-    # - ip_address (encrypted)
-    # - allowed_ips (encrypted)
-    # - zip_password (encrypted)
-    #
-    # Fields that should NOT be encrypted:
-    # - name, public_key, created_at, dns, endpoint
-    encrypted_fields = ["private_key", "ip_address", "allowed_ips", "zip_password"]
-    unencrypted_fields = ["name", "public_key", "created_at", "dns", "endpoint"]
 
     for peer_row in peers:
         peer = dict(peer_row) if not isinstance(peer_row, dict) else peer_row.copy()
-        peer_name = peer.get("name", "unknown")
-        needs_repair = False
-
-
-        # Check fields that should NOT be encrypted
-        for field_name in unencrypted_fields:
-            if peer.get(field_name):
-                field_value = peer[field_name]
-                if isinstance(field_value, str) and field_value.strip().startswith("{"):
-                    needs_repair = True
-
-                    # Decrypt and store as plain text
-                    try:
-                        decrypted_value = Helper.decrypt_database_field(
-                            field_value, master_password
-                        )
-
-                        # Check if decryption actually worked
-                        # For a successful decryption, the result should:
-                        # 1. Be different from the original encrypted value
-                        # 2. Not start with '{' (not JSON)
-                        # 3. Have reasonable length for the field type
-                        decryption_worked = (
-                            decrypted_value != field_value and
-                            not decrypted_value.startswith("{") and
-                            len(decrypted_value) > 0
-                        )
-
-                        if not decryption_worked:
-                            # Decryption failed, handle special case for public_key
-                            if field_name == "public_key":
-
-                                # Get the decrypted private key to regenerate public key
-                                private_key_encrypted = peer.get("private_key", "")
-                                if private_key_encrypted:
-                                    try:
-                                        private_key_plain = (
-                                            Helper.decrypt_database_field(
-                                                private_key_encrypted, master_password
-                                            )
-                                        )
-                                        # Check if we got a valid WireGuard private key
-                                        # (44 chars, base64-like)
-                                        if (private_key_plain and
-                                            len(private_key_plain) == 44 and
-                                            (private_key_plain !=
-                                             private_key_encrypted) and
-                                            not private_key_plain.startswith("{")):
-                                            # Successfully decrypted private key,
-                                            # regenerate public key
-                                            import subprocess
-                                            result = subprocess.run([
-                                                "wg", "pubkey"
-                                            ], input=private_key_plain,
-                                               capture_output=True, text=True,
-                                               check=False)
-
-                                            if result.returncode == 0:
-                                                regenerated_public_key = (
-                                                    result.stdout.strip()
-                                                )
-
-                                                # Update database with regenerated
-                                                # public key
-                                                db.update_peer_field(
-                                                    peer_name, field_name,
-                                                    regenerated_public_key
-                                                )
-
-                                            else:
-                                                pass
-                                        else:
-                                            pass
-                                    except Exception:
-                                        pass
-                                else:
-                                    pass
-                            else:
-                                pass
-                        else:
-                            # Decryption worked, update the database with
-                            # the decrypted value
-                            db.update_peer_field(peer_name, field_name, decrypted_value)
-
-
-                    except Exception:
-                        pass
-
-                else:
-                    pass
-
-        # Check each field that should be encrypted
-        for field_name in encrypted_fields:
-            if peer.get(field_name):
-                field_value = peer[field_name]
-
-                # Check if this field is unencrypted (doesn't start with JSON format)
-                if (isinstance(field_value, str) and
-                    not field_value.strip().startswith("{")):
-
-                    needs_repair = True
-
-                    # Encrypt the field
-                    try:
-                        encrypted_value = Helper.encrypt_database_field(
-                            field_value, master_password, salt
-                        )
-
-                        # Update the database
-                        db.update_peer_field(peer_name, field_name, encrypted_value)
-
-
-                    except Exception:
-                        pass
-
-                elif field_value.strip().startswith("{"):
-                    # Try to verify it's properly encrypted and can be decrypted
-                    try:
-                        decrypted = Helper.decrypt_database_field(
-                            field_value, master_password
-                        )
-                        # Check if decryption actually worked
-                        if (decrypted != field_value and
-                            not decrypted.startswith("{") and
-                            len(decrypted) > 0):
-                            pass
-                        # Try to fix this encrypted field that can't be decrypted
-                        elif field_name == "private_key":
-                            try:
-                                # Generate new keypair
-                                new_private_key, new_public_key = generate_keypair()
-
-                                # Encrypt the new private key
-                                encrypted_private_key = Helper.encrypt_database_field(
-                                    new_private_key, master_password, salt
-                                )
-
-                                # Update database with new private key
-                                db.update_peer_keys(
-                                    peer_name, encrypted_private_key, new_public_key
-                                )
-
-                                needs_repair = True
-                            except Exception:
-                                pass
-                        else:
-                            pass
-                    except Exception:
-                        pass
-                else:
-                    pass
-
-        if needs_repair:
+        
+        if _repair_peer_encryption(peer, master_password, salt):
             repaired_count += 1
-
 
     if repaired_count > 0:
         print(f"Successfully repaired {repaired_count} peer(s) with encryption issues.")
@@ -1081,9 +1282,15 @@ def main() -> None:
 Examples:
   {sys.argv[0]} init                    Initialize with existing config
   {sys.argv[0]} list-peers              List all peers (no sudo needed)
-  sudo {sys.argv[0]} add-peer alice     Add a new peer
+  sudo {sys.argv[0]} add-peer alice     Add a new peer (dynamically updates WG)
+  sudo {sys.argv[0]} remove-peer alice  Remove a peer (dynamically updates WG)
+  sudo {sys.argv[0]} import-peers file.json  Import peers (dynamically updates WG)
+  sudo {sys.argv[0]} sync-peers         Sync all peers to running WG interface
   {sys.argv[0]} peer-zip-info           View ZIP passwords
   {sys.argv[0]} version                 Show version information
+
+Note: add-peer, remove-peer, and import-peers now update the running WireGuard
+interface dynamically without requiring a restart.
 
 For more help: {sys.argv[0]} <command> --help
 """
@@ -1176,6 +1383,12 @@ For more help: {sys.argv[0]} <command> --help
         "restart-wireguard", help="Restart WireGuard interface"
     )
     restart_parser.set_defaults(func=restart_wireguard)
+
+    # Sync peers to interface
+    sync_parser = subparsers.add_parser(
+        "sync-peers", help="Sync all database peers to running WireGuard interface without restart"
+    )
+    sync_parser.set_defaults(func=sync_peers_to_interface)
 
     # Export peers
     export_parser = subparsers.add_parser(

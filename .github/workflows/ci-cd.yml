@@ -106,9 +106,6 @@ jobs:
       if: steps.version_check.outputs.exists != 'true'
       run: rm -rf dist/ build/ *.egg-info
         
-        # Use SETUPTOOLS_SCM_PRETEND_VERSION to override VCS version detection
-        echo "SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.dev_version }}" >> $GITHUB_ENV
-        
     - name: Build package
       if: steps.version_check.outputs.exists != 'true'
       run: hatch build

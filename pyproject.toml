@@ -105,6 +105,9 @@ strict_equality = true
 [tool.ruff]
 target-version = "py310"
 line-length = 88
+exclude = [
+  "src/wireguard_peer_tool/_version.py",
+]
 
 [tool.ruff.lint]
 select = [

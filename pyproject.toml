@@ -182,7 +182,7 @@ ban-relative-imports = "all"
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
 
 [tool.pytest.ini_options]
-minaddopts = [
+addopts = [
   "--strict-config",
   "--strict-markers",
   "--cov=wireguard_peer_tool",

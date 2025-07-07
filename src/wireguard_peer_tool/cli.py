@@ -665,10 +665,6 @@ def add_peer(args: argparse.Namespace) -> None:
             f"Failed to add peer '{peer_name}' to running WireGuard interface"
         )
 
-    # Dynamically add peer to running WireGuard interface
-    if not add_peer_to_wireguard_interface(public_key, f"{ip_address}/32"):
-        logger.warning("Failed to add peer to running WireGuard interface")
-
 
 def remove_peer(args: argparse.Namespace) -> None:
     """Remove a peer"""
@@ -716,11 +712,6 @@ def remove_peer(args: argparse.Namespace) -> None:
         logger.warning(
             f"Failed to remove peer '{peer_name}' from running WireGuard interface"
         )
-
-    # Dynamically remove peer from running WireGuard interface
-    public_key = peer_row.get("public_key")
-    if public_key and not remove_peer_from_wireguard_interface(public_key):
-        logger.warning("Failed to remove peer from running WireGuard interface")
 
 
 def list_peers(_args: argparse.Namespace) -> None:

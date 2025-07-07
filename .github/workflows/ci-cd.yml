@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, "feature/*" ]
-  pull_request:
     branches: [ main, develop ]
+  pull_request:
+    # Run on all PRs regardless of target branch
   release:
     types: [ published ]
 
@@ -77,46 +77,91 @@ jobs:
         python -m pip install --upgrade pip
         pip install hatch
         
-    - name: Get version info
+    - name: Inject dev version
+      run: python .hooks/sync_version.py --dev
+        
+    - name: Get clean version
       id: version
       run: |
-        # For dev builds, use a simple incremental version without VCS info
-        BUILD_NUMBER=${GITHUB_RUN_NUMBER}
+        VERSION=$(hatch version | cut -d+ -f1)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Clean version: $VERSION"
         
-        # Create simple dev version: 0.1.0.dev123
-        DEV_VERSION="0.1.0.dev${BUILD_NUMBER}"
-        
-        echo "dev_version=$DEV_VERSION" >> $GITHUB_OUTPUT
-        echo "Generated dev version: $DEV_VERSION"
-        
-    - name: Update version for dev release
+    - name: Check if version exists on Test PyPI
+      id: version_check
+      env:
+        VERSION: ${{ env.VERSION }}
       run: |
-        # Update the version file with dev version
-        echo "__version__ = \"${{ steps.version.outputs.dev_version }}\"" > src/wireguard_peer_tool/_version.py
+        if pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ wireguard-peer-tool==${VERSION} --dry-run; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "⚠️ Version ${VERSION} already exists on Test PyPI"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "✅ Version ${VERSION} is available for upload"
+        fi
+      continue-on-error: true
         
-        # Use SETUPTOOLS_SCM_PRETEND_VERSION to override VCS version detection
-        echo "SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.dev_version }}" >> $GITHUB_ENV
+    - name: Clean previous builds
+      if: steps.version_check.outputs.exists != 'true'
+      run: rm -rf dist/ build/ *.egg-info
         
     - name: Build package
-      run: |
-        # Build with version override
-        hatch build
-      env:
-        SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.dev_version }}
-        
+      if: steps.version_check.outputs.exists != 'true'
+      run: hatch build
+      
     - name: Publish to Test PyPI
+      if: steps.version_check.outputs.exists != 'true'
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         repository-url: https://test.pypi.org/legacy/
         packages-dir: dist/
+        verbose: true
+        
+    - name: Verify package is available
+      if: steps.version_check.outputs.exists != 'true'
+      id: verify_package
+      env:
+        VERSION: ${{ env.VERSION }}
+      run: |
+        for i in {1..30}; do
+          if pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ wireguard-peer-tool==${VERSION}; then
+            echo "Package ${VERSION} is now available and installable on Test PyPI"
+            pip uninstall -y wireguard-peer-tool
+            echo "success=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "Attempt $i: Package not yet installable, waiting 20s... (${i}/30)"
+          sleep 20
+        done
+        echo "success=false" >> $GITHUB_OUTPUT
+        exit 1
         
     - name: Comment on PR with install instructions
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && (steps.version_check.outputs.exists == 'true' || steps.verify_package.outputs.success == 'true')
       uses: actions/github-script@v7
+      env:
+        VERSION: ${{ env.VERSION }}
       with:
         script: |
-          const devVersion = '${{ steps.version.outputs.dev_version }}';
-          const installCmd = `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ wireguard-peer-tool==${devVersion}`;
+          const version = process.env.VERSION;
+          const prNumber = context.payload.pull_request.number;
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Find existing bot comments
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+          });
+
+          const botComment = comments.data.find(comment =>
+            comment.user.type === 'Bot' &&
+            comment.body.includes('📦 Test Package Available')
+          );
+
+          const installCmd = `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ wireguard-peer-tool==${version}`;
           
           const body = `## 📦 Test Package Available
           
@@ -126,20 +171,31 @@ jobs:
           ${installCmd}
           \`\`\`
           
-          **Version:** \`${devVersion}\`
+          **Version:** \`${version}\`
           
           You can test this version before merging. The package will be available at:
-          https://test.pypi.org/project/wireguard-peer-tool/${devVersion}/
+          https://test.pypi.org/project/wireguard-peer-tool/${version}/
           
           ---
           *This comment was automatically generated by the CI/CD pipeline.*`;
           
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: body
-          });
+          if (botComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: owner,
+              repo: repo,
+              comment_id: botComment.id,
+              body: body
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: owner,
+              repo: repo,
+              issue_number: prNumber,
+              body: body
+            });
+          }
           
   build-and-publish-prod:
     needs: test
@@ -165,9 +221,19 @@ jobs:
         python -m pip install --upgrade pip
         pip install hatch
         
+    - name: Sync version for production
+      run: python .hooks/sync_version.py
+        
+    - name: Get production version
+      id: prod_version
+      run: |
+        # For production, get the clean version after sync
+        PACKAGE_VERSION=$(hatch version)
+        echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
+        echo "Production version: $PACKAGE_VERSION"
+        
     - name: Verify version matches release tag
       run: |
-        PACKAGE_VERSION=$(hatch version)
         RELEASE_TAG=${GITHUB_REF#refs/tags/}
         
         if [ "v$PACKAGE_VERSION" != "$RELEASE_TAG" ]; then
@@ -175,7 +241,7 @@ jobs:
           exit 1
         fi
         
-        echo "Version verified: $PACKAGE_VERSION matches $RELEASE_TAG"
+        echo "✅ Version verified: $PACKAGE_VERSION matches $RELEASE_TAG"
         
     - name: Build package
       run: |

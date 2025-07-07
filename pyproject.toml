@@ -3,8 +3,9 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wireguard-peer-tool"
 dynamic = ["version"]
+name = "wireguard-peer-tool"
+
 description = "A modern, secure Python-based command-line tool for managing WireGuard VPN server configurations and peers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,11 +62,9 @@ Source = "https://github.com/dacoburn/wireguard-peer-tool"
 wireguard-peer-tool = "wireguard_peer_tool.cli:main"
 wg-peer-tool = "wireguard_peer_tool.cli:main"
 
-[tool.hatch.version]
-source = "vcs"
 
-[tool.hatch.build.hooks.vcs]
-version-file = "src/wireguard_peer_tool/_version.py"
+
+
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -88,8 +87,7 @@ multi_line_output = 3
 line_length = 88
 
 [tool.mypy]
-python_version = "3.8"
-warn_return_any = true
+python_warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
@@ -103,8 +101,7 @@ warn_unreachable = true
 strict_equality = true
 
 [tool.ruff]
-target-version = "py310"
-line-length = 88
+target-line-length = 88
 exclude = [
   "src/wireguard_peer_tool/_version.py",
 ]
@@ -185,7 +182,6 @@ ban-relative-imports = "all"
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
 
 [tool.pytest.ini_options]
-minversion = "6.0"
 addopts = [
   "--strict-config",
   "--strict-markers",
@@ -203,3 +199,9 @@ markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   "integration: marks tests as integration tests",
 ]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/wireguard_peer_tool/_version.py"

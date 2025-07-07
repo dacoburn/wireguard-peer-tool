@@ -1371,6 +1371,9 @@ def check_config_file_access() -> tuple[bool, str]:
 
 def version_command(_args: argparse.Namespace) -> None:
     """Display version information"""
+    from wireguard_peer_tool._version import __version__
+    print(f"WireGuard Manager v{__version__}")
+    print("A modern, secure Python-based CLI tool for managing WireGuard VPN servers")
 
 
 def main() -> None:

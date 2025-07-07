@@ -8,7 +8,6 @@ import os
 import secrets
 import tempfile
 from pathlib import Path
-from typing import Optional, Union
 
 import pyzipper
 import qrcode
@@ -306,7 +305,7 @@ AllowedIPs = {allowed_ip}
 
     @staticmethod
     def is_zip_encrypted(
-        master_password, zip_password: Union[str, dict]
+        master_password, zip_password: str | dict
     ) -> tuple[bool, bool]:
         """ Check if a ZIP password is encrypted and valid.
         Returns a tuple (is_encrypted, is_valid)."""
@@ -505,7 +504,7 @@ AllowedIPs = {allowed_ip}
         return kdf.derive(password.encode())
 
     @staticmethod
-    def encrypt_data(data: str, password: str, salt: Optional[bytes] = None) -> dict:
+    def encrypt_data(data: str, password: str, salt: bytes | None = None) -> dict:
         """Encrypt data using Fernet with password-derived key"""
         if salt is None:
             salt = secrets.token_bytes(32)

@@ -5,7 +5,7 @@ import sqlite3
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, Any
+from typing import Any
 
 
 class ServerConfig:
@@ -25,7 +25,7 @@ class ServerConfig:
         dns: str,
         client_root: str,
         data_encrypted: int = 0,
-        encryption_salt: Optional[str] = None,
+        encryption_salt: str | None = None,
         endpoint: str = "palmdale.dactbc.com",
     ):
         self.config_path = config_path
@@ -185,7 +185,7 @@ class DB:
             )
             conn.commit()
 
-    def get_server_config(self) -> Optional[Dict[str, Any]]:
+    def get_server_config(self) -> dict[str, Any] | None:
         """Get server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -195,7 +195,7 @@ class DB:
                 return dict(row)
             return None
 
-    def update_server_config(self, updates: Dict[str, Any]) -> None:
+    def update_server_config(self, updates: dict[str, Any]) -> None:
         """Update server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -234,7 +234,7 @@ class DB:
             if cursor.fetchone():
                 sys.exit(1)
 
-    def get_peer_by_name(self, peer_name: str) -> Optional[Dict[str, Any]]:
+    def get_peer_by_name(self, peer_name: str) -> dict[str, Any] | None:
         """Get peer by name"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -244,7 +244,7 @@ class DB:
                 return dict(row)
             return None
 
-    def remove_peer_from_db(self, peer_name: str) -> Optional[Tuple[Any, ...]]:
+    def remove_peer_from_db(self, peer_name: str) -> tuple[Any, ...] | None:
         """Remove peer from database and return the removed peer data"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -261,7 +261,7 @@ class DB:
 
             return None
 
-    def list_peers(self) -> List[Dict[str, Any]]:
+    def list_peers(self) -> list[dict[str, Any]]:
         """List all peers"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -272,7 +272,7 @@ class DB:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_peers_list(self) -> List[Dict[str, Any]]:
+    def get_peers_list(self) -> list[dict[str, Any]]:
         """Get list of peers for config generation"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -282,7 +282,7 @@ class DB:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_ips(self) -> List[Dict[str, Any]]:
+    def get_ips(self) -> list[dict[str, Any]]:
         """Get all IP addresses"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -337,7 +337,7 @@ class DB:
         except Exception:
             return False
 
-    def get_all_peers_raw(self) -> List[Dict[str, Any]]:
+    def get_all_peers_raw(self) -> list[dict[str, Any]]:
         """Get all peers with all fields for repair operations"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -390,12 +390,12 @@ def get_db_instance() -> DB:
 
 
 # Wrapper functions for CLI compatibility
-def get_server_config() -> Optional[Dict[str, Any]]:
+def get_server_config() -> dict[str, Any] | None:
     """Get server configuration from database"""
     return get_db_instance().get_server_config()
 
 
-def save_server_config(server_config: Dict[str, Any]) -> None:
+def save_server_config(server_config: dict[str, Any]) -> None:
     """Save server configuration to database"""
     db_instance = get_db_instance()
 
@@ -431,22 +431,22 @@ def update_server_config(key: str, value: Any) -> None:
     get_db_instance().update_server_config({key: value})
 
 
-def get_all_peers() -> List[Dict[str, Any]]:
+def get_all_peers() -> list[dict[str, Any]]:
     """Get all peers from database"""
     return get_db_instance().get_peers_list()
 
 
-def get_peer_by_name(name: str) -> Optional[Dict[str, Any]]:
+def get_peer_by_name(name: str) -> dict[str, Any] | None:
     """Get peer by name from database"""
     return get_db_instance().get_peer_by_name(name)
 
 
-def get_ips() -> List[Dict[str, Any]]:
+def get_ips() -> list[dict[str, Any]]:
     """Get all peer IPs from database"""
     return get_db_instance().get_ips()
 
 
-def add_peer(peer_data: Dict[str, Any]) -> None:
+def add_peer(peer_data: dict[str, Any]) -> None:
     """Add a peer to the database"""
     db_instance = get_db_instance()
 
@@ -472,7 +472,7 @@ def add_peer(peer_data: Dict[str, Any]) -> None:
     db_instance.insert_peer_to_db(peer_obj)
 
 
-def remove_peer(name: str) -> Optional[Tuple[Any, ...]]:
+def remove_peer(name: str) -> tuple[Any, ...] | None:
     """Remove a peer from the database"""
     return get_db_instance().remove_peer_from_db(name)
 
@@ -482,7 +482,7 @@ def test_database_write_permissions() -> bool:
     return get_db_instance().test_database_write_permissions()
 
 
-def get_all_peers_raw() -> List[Dict[str, Any]]:
+def get_all_peers_raw() -> list[dict[str, Any]]:
     """Get all peers with all fields for repair operations"""
     return get_db_instance().get_all_peers_raw()
 

@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, "feature/*" ]
-  pull_request:
     branches: [ main, develop ]
+  pull_request:
+    # Run on all PRs regardless of target branch
   release:
     types: [ published ]
 

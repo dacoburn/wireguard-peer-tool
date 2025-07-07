@@ -76,11 +76,15 @@ def test_cli_list_peers_no_config():
 
         result = subprocess.run([
             sys.executable, "-m", "wireguard_peer_tool.cli", "list-peers"
-        ], check=False, capture_output=True, text=True, cwd=Path(__file__).parent.parent)
+        ], check=False, capture_output=True, text=True,
+           cwd=Path(__file__).parent.parent)
 
         # Should complete successfully even with no config
         assert result.returncode == 0
-        assert "No peers found" in result.stdout or "Server not initialized" in result.stderr
+        assert (
+            "No peers found" in result.stdout or
+            "Server not initialized" in result.stderr
+        )
 
 
 class TestCLIImports:

@@ -1,0 +1,32 @@
+# Ruff configuration
+
+# Set line length to 88 characters (Black's default)  
+line-length = 88
+
+[lint]
+# Focus on core linting rules for code quality
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+
+# Ignore specific rules that are too aggressive for our use case
+ignore = [
+    "S",      # flake8-bandit (security) - too aggressive for WireGuard tool
+    "SIM",    # flake8-simplify - can be overly aggressive
+    "PTH",    # flake8-use-pathlib - would require major refactoring
+    "T20",    # flake8-print - we have intentional print statements in console functions
+]
+
+[lint.per-file-ignores]
+# Allow print statements in CLI module since it's a command-line tool
+"src/wireguard_peer_tool/cli.py" = ["T201"]
+
+# Allow assert statements in tests
+"tests/*.py" = ["S101"]

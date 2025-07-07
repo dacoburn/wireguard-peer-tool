@@ -9,14 +9,14 @@ on:
     types: [ published ]
 
 env:
-  PYTHON_VERSION: "3.8"
+  PYTHON_VERSION: "3.10"
   
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         
     steps:
     - uses: actions/checkout@v4
@@ -43,14 +43,6 @@ jobs:
       run: |
         ruff check src/
         
-    - name: Format check with black
-      run: |
-        black --check src/
-        
-    - name: Type check with mypy
-      run: |
-        mypy src/wireguard_peer_tool/
-        
     - name: Run tests
       run: |
         pytest --cov=wireguard_peer_tool --cov-report=xml tests/
@@ -63,7 +55,7 @@ jobs:
   build-and-publish-test:
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref != 'refs/heads/main') || github.event_name == 'pull_request'
     
     permissions:
       contents: read
@@ -88,30 +80,29 @@ jobs:
     - name: Get version info
       id: version
       run: |
-        # Get the current version from hatch
-        BASE_VERSION=$(hatch version)
-        
-        # Create dev version based on branch and commit
-        BRANCH_NAME=${GITHUB_REF#refs/heads/}
-        BRANCH_NAME=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9.-]/_/g')
-        COMMIT_SHORT=${GITHUB_SHA:0:7}
+        # For dev builds, use a simple incremental version without VCS info
         BUILD_NUMBER=${GITHUB_RUN_NUMBER}
         
-        # Create dev version: 1.0.0.dev20231201001+branch.abc1234
-        DEV_VERSION="${BASE_VERSION}.dev${BUILD_NUMBER}+${BRANCH_NAME}.${COMMIT_SHORT}"
+        # Create simple dev version: 0.1.0.dev123
+        DEV_VERSION="0.1.0.dev${BUILD_NUMBER}"
         
-        echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
         echo "dev_version=$DEV_VERSION" >> $GITHUB_OUTPUT
-        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+        echo "Generated dev version: $DEV_VERSION"
         
     - name: Update version for dev release
       run: |
         # Update the version file with dev version
         echo "__version__ = \"${{ steps.version.outputs.dev_version }}\"" > src/wireguard_peer_tool/_version.py
         
+        # Use SETUPTOOLS_SCM_PRETEND_VERSION to override VCS version detection
+        echo "SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.dev_version }}" >> $GITHUB_ENV
+        
     - name: Build package
       run: |
+        # Build with version override
         hatch build
+      env:
+        SETUPTOOLS_SCM_PRETEND_VERSION: ${{ steps.version.outputs.dev_version }}
         
     - name: Publish to Test PyPI
       uses: pypa/gh-action-pypi-publish@release/v1

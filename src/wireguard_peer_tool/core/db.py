@@ -1,20 +1,33 @@
 """Module for managing WireGuard peers in a database"""
+
 import os
 import sqlite3
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 
 class ServerConfig:
     """Class representing the server configuration"""
 
-    def __init__(self, config_path: str, interface_name: str, address: str,
-                 listen_port: int, private_key: str, public_key: str,
-                 post_up: str, post_down: str, table: str,  dns: str, client_root: str,
-                 data_encrypted: int = 0, encryption_salt: Optional[str] = None,
-                 endpoint: str = "palmdale.dactbc.com"):
+    def __init__(
+        self,
+        config_path: str,
+        interface_name: str,
+        address: str,
+        listen_port: int,
+        private_key: str,
+        public_key: str,
+        post_up: str,
+        post_down: str,
+        table: str,
+        dns: str,
+        client_root: str,
+        data_encrypted: int = 0,
+        encryption_salt: str | None = None,
+        endpoint: str = "palmdale.dactbc.com",
+    ):
         self.config_path = config_path
         self.interface_name = interface_name
         self.address = address
@@ -30,11 +43,20 @@ class ServerConfig:
         self.encryption_salt = encryption_salt
         self.endpoint = endpoint
 
+
 class PeerData:
     """Data class to hold peer information"""
-    def __init__(self, name: str, public_key: str, private_key: str,
-                 ip_address: str, allowed_ips: str, zip_path: Path,
-                 zip_password: str):
+
+    def __init__(
+        self,
+        name: str,
+        public_key: str,
+        private_key: str,
+        ip_address: str,
+        allowed_ips: str,
+        zip_path: Path,
+        zip_password: str,
+    ):
         self.name = name
         self.public_key = public_key
         self.private_key = private_key
@@ -43,16 +65,24 @@ class PeerData:
         self.zip_path = zip_path
         self.zip_password = zip_password
 
+
 class DB:
     """Database class for managing WireGuard peers"""
+
     def update_peer_ip_address(self, peer_name: str, new_ip_address: str) -> bool:
-        """Update the ip_address for a peer by name. Returns True if updated, False if peer not found."""
+        """
+        Update the ip_address for a peer by name.
+        Returns True if updated, False if peer not found.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM peers WHERE name = ?", (peer_name,))
             if cursor.fetchone()[0] == 0:
                 return False
-            cursor.execute("UPDATE peers SET ip_address = ? WHERE name = ?", (new_ip_address, peer_name))
+            cursor.execute(
+                "UPDATE peers SET ip_address = ? WHERE name = ?",
+                (new_ip_address, peer_name),
+            )
             conn.commit()
             return True
 
@@ -61,7 +91,7 @@ class DB:
         self.init_db()
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> Any:
         """Context manager for database connections"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -70,13 +100,14 @@ class DB:
         finally:
             conn.close()
 
-    def init_db(self):
+    def init_db(self) -> None:
         """Initialize the database with required tables"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
             # Create server_config table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS server_config (
                     id INTEGER PRIMARY KEY,
                     config_path TEXT NOT NULL,
@@ -94,10 +125,12 @@ class DB:
                     encryption_salt TEXT,
                     endpoint TEXT DEFAULT 'palmdale.dactbc.com'
                 )
-            """)
+            """
+            )
 
             # Create peers table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS peers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
@@ -109,7 +142,8 @@ class DB:
                     zip_path TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
+            """
+            )
 
             conn.commit()
 
@@ -120,26 +154,38 @@ class DB:
             cursor.execute("SELECT COUNT(*) FROM server_config")
             return cursor.fetchone()[0] > 0
 
-    def insert_server_config(self, config: ServerConfig):
+    def insert_server_config(self, config: ServerConfig) -> None:
         """Insert server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO server_config
                 (config_path, interface_name, address, listen_port, private_key,
                  public_key, post_up, post_down, table_name, dns, client_root,
                  data_encrypted, encryption_salt, endpoint)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                config.config_path, config.interface_name, config.address,
-                config.listen_port, config.private_key, config.public_key,
-                config.post_up, config.post_down, config.table,
-                config.dns, config.client_root, config.data_encrypted,
-                config.encryption_salt, config.endpoint
-            ))
+            """,
+                (
+                    config.config_path,
+                    config.interface_name,
+                    config.address,
+                    config.listen_port,
+                    config.private_key,
+                    config.public_key,
+                    config.post_up,
+                    config.post_down,
+                    config.table,
+                    config.dns,
+                    config.client_root,
+                    config.data_encrypted,
+                    config.encryption_salt,
+                    config.endpoint,
+                ),
+            )
             conn.commit()
 
-    def get_server_config(self) -> Optional[dict]:
+    def get_server_config(self) -> dict[str, Any] | None:
         """Get server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -149,7 +195,7 @@ class DB:
                 return dict(row)
             return None
 
-    def update_server_config(self, updates: dict):
+    def update_server_config(self, updates: dict[str, Any]) -> None:
         """Update server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -158,22 +204,29 @@ class DB:
             cursor.execute(f"UPDATE server_config SET {set_clause}", values)
             conn.commit()
 
-    def insert_peer_to_db(self, peer: PeerData):
+    def insert_peer_to_db(self, peer: PeerData) -> None:
         """Insert peer into database"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO peers (name, public_key, private_key, ip_address,
                                  allowed_ips, zip_password, zip_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                peer.name, peer.public_key, peer.private_key,
-                peer.ip_address, peer.allowed_ips, peer.zip_password,
-                str(peer.zip_path)
-            ))
+            """,
+                (
+                    peer.name,
+                    peer.public_key,
+                    peer.private_key,
+                    peer.ip_address,
+                    peer.allowed_ips,
+                    peer.zip_password,
+                    str(peer.zip_path),
+                ),
+            )
             conn.commit()
 
-    def check_peer_exists(self, peer_name: str):
+    def check_peer_exists(self, peer_name: str) -> None:
         """Check if peer exists and exit if it does"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -181,7 +234,7 @@ class DB:
             if cursor.fetchone():
                 sys.exit(1)
 
-    def get_peer_by_name(self, peer_name: str) -> Optional[dict]:
+    def get_peer_by_name(self, peer_name: str) -> dict[str, Any] | None:
         """Get peer by name"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -191,7 +244,7 @@ class DB:
                 return dict(row)
             return None
 
-    def remove_peer_from_db(self, peer_name: str) -> Optional[tuple]:
+    def remove_peer_from_db(self, peer_name: str) -> tuple[Any, ...] | None:
         """Remove peer from database and return the removed peer data"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -208,23 +261,28 @@ class DB:
 
             return None
 
-    def list_peers(self) -> list:
+    def list_peers(self) -> list[dict[str, Any]]:
         """List all peers"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, public_key, private_key, ip_address, allowed_ips, zip_password, zip_path, created_at FROM peers")
+            cursor.execute(
+                "SELECT name, public_key, private_key, ip_address, allowed_ips, "
+                "zip_password, zip_path, created_at FROM peers"
+            )
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_peers_list(self) -> list:
+    def get_peers_list(self) -> list[dict[str, Any]]:
         """Get list of peers for config generation"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, public_key, ip_address, allowed_ips FROM peers")
+            cursor.execute(
+                "SELECT name, public_key, ip_address, allowed_ips FROM peers"
+            )
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_ips(self) -> list:
+    def get_ips(self) -> list[dict[str, Any]]:
         """Get all IP addresses"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -233,31 +291,96 @@ class DB:
             return [dict(row) for row in rows]
 
     def update_peer_zip_password(self, peer_name: str, new_password: str) -> bool:
-        """Update the zip_password for a peer by name. Returns True if updated, False if peer not found."""
+        """
+        Update the zip_password for a peer by name.
+        Returns True if updated, False if peer not found.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM peers WHERE name = ?", (peer_name,))
             if cursor.fetchone()[0] == 0:
                 return False
-            cursor.execute("UPDATE peers SET zip_password = ? WHERE name = ?", (new_password, peer_name))
+            cursor.execute(
+                "UPDATE peers SET zip_password = ? WHERE name = ?",
+                (new_password, peer_name),
+            )
             conn.commit()
             return True
 
     def update_peer_allowed_ips(self, peer_name: str, new_allowed_ips: str) -> bool:
-        """Update the allowed_ips for a peer by name. Returns True if updated, False if peer not found."""
+        """
+        Update the allowed_ips for a peer by name.
+        Returns True if updated, False if peer not found.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM peers WHERE name = ?", (peer_name,))
             if cursor.fetchone()[0] == 0:
                 return False
-            cursor.execute("UPDATE peers SET allowed_ips = ? WHERE name = ?", (new_allowed_ips, peer_name))
+            cursor.execute(
+                "UPDATE peers SET allowed_ips = ? WHERE name = ?",
+                (new_allowed_ips, peer_name),
+            )
             conn.commit()
             return True
+
+    def test_database_write_permissions(self) -> bool:
+        """Test if we can write to the database"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM peers")
+                # Try to create a temporary table to test write access
+                cursor.execute("CREATE TEMPORARY TABLE test_write (id INTEGER)")
+                cursor.execute("DROP TABLE test_write")
+                return True
+        except Exception:
+            return False
+
+    def get_all_peers_raw(self) -> list[dict[str, Any]]:
+        """Get all peers with all fields for repair operations"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM peers")
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def update_peer_field(self, peer_name: str, field_name: str, value: str) -> bool:
+        """Update a specific field for a peer"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"UPDATE peers SET {field_name} = ? WHERE name = ?",
+                    (value, peer_name),
+                )
+                conn.commit()
+                return True
+        except Exception:
+            return False
+
+    def update_peer_keys(
+        self, peer_name: str, private_key: str, public_key: str
+    ) -> bool:
+        """Update both private and public keys for a peer"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE peers SET private_key = ?, public_key = ? WHERE name = ?",
+                    (private_key, public_key, peer_name),
+                )
+                conn.commit()
+                return True
+        except Exception:
+            return False
+
 
 # Global database instance
 _db_instance = None
 
-def get_db_instance():
+
+def get_db_instance() -> DB:
     """Get or create the global database instance"""
     global _db_instance
     if _db_instance is None:
@@ -265,12 +388,14 @@ def get_db_instance():
         _db_instance = DB(db_path)
     return _db_instance
 
+
 # Wrapper functions for CLI compatibility
-def get_server_config():
+def get_server_config() -> dict[str, Any] | None:
     """Get server configuration from database"""
     return get_db_instance().get_server_config()
 
-def save_server_config(server_config: dict):
+
+def save_server_config(server_config: dict[str, Any]) -> None:
     """Save server configuration to database"""
     db_instance = get_db_instance()
 
@@ -289,7 +414,7 @@ def save_server_config(server_config: dict):
         client_root=server_config.get("client_config_root", "./clients"),
         data_encrypted=1 if server_config.get("data_encrypted") else 0,
         encryption_salt=server_config.get("encryption_salt"),
-        endpoint=server_config.get("endpoint", "")
+        endpoint=server_config.get("endpoint", ""),
     )
 
     if db_instance.check_if_server_config_exists():
@@ -300,29 +425,38 @@ def save_server_config(server_config: dict):
         # Insert new config
         db_instance.insert_server_config(config_obj)
 
-def update_server_config(key: str, value):
+
+def update_server_config(key: str, value: Any) -> None:
     """Update a single server configuration value"""
     get_db_instance().update_server_config({key: value})
 
-def get_all_peers():
+
+def get_all_peers() -> list[dict[str, Any]]:
     """Get all peers from database"""
     return get_db_instance().get_peers_list()
 
-def get_peer_by_name(name: str):
+
+def get_peer_by_name(name: str) -> dict[str, Any] | None:
     """Get peer by name from database"""
     return get_db_instance().get_peer_by_name(name)
 
-def get_ips():
+
+def get_ips() -> list[dict[str, Any]]:
     """Get all peer IPs from database"""
     return get_db_instance().get_ips()
 
-def add_peer(peer_data: dict):
+
+def add_peer(peer_data: dict[str, Any]) -> None:
     """Add a peer to the database"""
     db_instance = get_db_instance()
 
     # Get server config to determine client root path
     server_config = get_server_config()
-    client_root = server_config.get("client_config_root", "./clients") if server_config else "./clients"
+    client_root = (
+        server_config.get("client_config_root", "./clients")
+        if server_config
+        else "./clients"
+    )
 
     # Convert dict to PeerData object
     peer_obj = PeerData(
@@ -332,11 +466,32 @@ def add_peer(peer_data: dict):
         ip_address=peer_data["ip_address"],
         allowed_ips=peer_data.get("allowed_ips", f"{peer_data['ip_address']}/32"),
         zip_path=Path(client_root) / peer_data["name"] / f"{peer_data['name']}.zip",
-        zip_password=peer_data["zip_password"]
+        zip_password=peer_data["zip_password"],
     )
 
     db_instance.insert_peer_to_db(peer_obj)
 
-def remove_peer(name: str):
+
+def remove_peer(name: str) -> tuple[Any, ...] | None:
     """Remove a peer from the database"""
     return get_db_instance().remove_peer_from_db(name)
+
+
+def test_database_write_permissions() -> bool:
+    """Test if we can write to the database"""
+    return get_db_instance().test_database_write_permissions()
+
+
+def get_all_peers_raw() -> list[dict[str, Any]]:
+    """Get all peers with all fields for repair operations"""
+    return get_db_instance().get_all_peers_raw()
+
+
+def update_peer_field(peer_name: str, field_name: str, value: str) -> bool:
+    """Update a specific field for a peer"""
+    return get_db_instance().update_peer_field(peer_name, field_name, value)
+
+
+def update_peer_keys(peer_name: str, private_key: str, public_key: str) -> bool:
+    """Update both private and public keys for a peer"""
+    return get_db_instance().update_peer_keys(peer_name, private_key, public_key)

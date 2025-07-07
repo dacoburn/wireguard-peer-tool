@@ -12,6 +12,7 @@ A modern, secure Python-based command-line tool for managing WireGuard VPN serve
 - **Automated Client Packages**: Generate password-protected ZIP files with configs, QR codes, and keys
 - **Smart IP Management**: Automatic IP assignment with conflict detection
 - **Live Configuration Updates**: Regenerate WireGuard configs without service disruption
+- **Dynamic Peer Sync**: Sync database peers to running WireGuard interface, removing orphaned peers
 - **Export/Import**: CSV and JSON support for peer data management
 - **Repair Tools**: Fix and regenerate damaged client packages
 - **Detailed Peer Information**: View comprehensive peer details and ZIP passwords
@@ -93,6 +94,9 @@ sudo wg-peer-tool update-config --dns 8.8.8.8 --client-root /etc/wireguard/clien
 
 # Regenerate WireGuard configuration
 sudo wg-peer-tool regenerate-wg-conf
+
+# Sync database peers to running WireGuard interface (removes orphaned peers)
+sudo wg-peer-tool sync-peers
 
 # Restart WireGuard service
 sudo wg-peer-tool restart-wireguard
@@ -217,7 +221,25 @@ sudo wg-peer-tool repair-peer-zips
 
 # Regenerate WireGuard config from database
 sudo wg-peer-tool regenerate-wg-conf
+
+# Sync database peers to running WireGuard interface
+# This removes orphaned peers and ensures all database peers are active
+sudo wg-peer-tool sync-peers
 ```
+
+### Dynamic WireGuard Management
+
+The tool provides seamless integration with running WireGuard interfaces:
+
+- **Add Peer**: `add-peer` automatically adds the new peer to the running interface
+- **Remove Peer**: `remove-peer` automatically removes the peer from the running interface  
+- **Import Peers**: `import-peers` adds all imported peers to the running interface
+- **Sync Command**: `sync-peers` performs a full bidirectional sync:
+  - Removes peers that exist in WireGuard but not in the database (orphaned peers)
+  - Adds/updates all database peers to the running interface
+  - Provides detailed feedback on what was changed
+
+This eliminates the need for WireGuard service restarts in most cases.
 
 ## Configuration Examples
 

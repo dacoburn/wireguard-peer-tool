@@ -4,7 +4,10 @@ import pathlib
 import re
 import sys
 import urllib.request
+import urllib.error
 import json
+import os
+from urllib.parse import urlparse
 
 VERSION_FILE = pathlib.Path("src/wireguard_peer_tool/_version.py")
 PYPROJECT_FILE = pathlib.Path("pyproject.toml")
@@ -22,7 +25,7 @@ def clean_version(version: str) -> str:
 
 def read_version_from_file(path: pathlib.Path) -> str:
     """Read version from _version.py file"""
-    content = path.read_text()
+    content = path.read_text(encoding='utf-8')
     match = VERSION_PATTERN.search(content)
     if not match:
         print(f"❌ Could not find __version__ in {path}")
@@ -59,7 +62,7 @@ def fetch_existing_versions() -> set:
         with urllib.request.urlopen(PYPI_API) as response:
             data = json.load(response)
         return set(data.get("releases", {}).keys())
-    except Exception as e:
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError) as e:
         print(f"⚠️ Warning: Failed to fetch existing versions from Test PyPI: {e}")
         return set()
 
@@ -79,12 +82,121 @@ def find_next_available_dev_version(base_version: str) -> str:
     print("❌ Could not find available .devN slot after 100 attempts.")
     sys.exit(1)
 
+def get_github_repo_info():
+    """Extract GitHub repo owner and name from git remote"""
+    try:
+        output = subprocess.check_output(["git", "remote", "get-url", "origin"], text=True).strip()
+        # Parse GitHub URL (both https and ssh formats)
+        if output.startswith("git@github.com:"):
+            repo_path = output.replace("git@github.com:", "").replace(".git", "")
+        elif "github.com/" in output:
+            parsed = urlparse(output)
+            repo_path = parsed.path.strip("/").replace(".git", "")
+        else:
+            return None
+        
+        parts = repo_path.split("/")
+        if len(parts) >= 2:
+            return parts[0], parts[1]
+        return None
+    except subprocess.CalledProcessError:
+        return None
+
+def get_pr_number():
+    """Get PR number from environment variables (GitHub Actions sets this)"""
+    # Check common environment variables for PR number
+    pr_number = os.environ.get("GITHUB_PR_NUMBER")
+    if not pr_number:
+        pr_number = os.environ.get("PR_NUMBER")
+    if not pr_number:
+        # Try to get from GitHub event if in GitHub Actions
+        github_event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if github_event_path and os.path.exists(github_event_path):
+            try:
+                with open(github_event_path, 'r', encoding='utf-8') as f:
+                    event_data = json.load(f)
+                if "pull_request" in event_data:
+                    pr_number = str(event_data["pull_request"]["number"])
+            except (OSError, json.JSONDecodeError, KeyError):
+                pass
+    return pr_number
+
+def update_pr_comment(version: str):
+    """Update or create a PR comment with the new test version install command"""
+    repo_info = get_github_repo_info()
+    pr_number = get_pr_number()
+    github_token = os.environ.get("GITHUB_TOKEN")
+    
+    if not repo_info or not pr_number or not github_token:
+        print(f"⚠️ Missing GitHub info - repo: {bool(repo_info)}, PR: {bool(pr_number)}, token: {bool(github_token)}")
+        return False
+    
+    owner, repo = repo_info
+    
+    # Comment content with install command
+    comment_marker = "<!-- WIREGUARD_PEER_TOOL_TEST_INSTALL -->"
+    install_command = f"pip install -i https://test.pypi.org/simple/ wireguard-peer-tool=={version}"
+    
+    comment_body = f"""{comment_marker}
+## 🧪 Test Build Available
+
+A test build of this PR is now available on Test PyPI:
+
+```bash
+{install_command}
+```
+
+**Note:** This is a test build and should only be used for testing purposes.
+"""
+    
+    # GitHub API URLs
+    comments_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+    
+    headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "wireguard-peer-tool-sync-version"
+    }
+    
+    try:
+        # Get existing comments
+        req = urllib.request.Request(comments_url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            comments = json.load(response)
+        
+        # Find existing comment with our marker
+        existing_comment = None
+        for comment in comments:
+            if comment_marker in comment.get("body", ""):
+                existing_comment = comment
+                break
+        
+        if existing_comment:
+            # Update existing comment
+            comment_url = existing_comment["url"]
+            data = json.dumps({"body": comment_body}).encode('utf-8')
+            req = urllib.request.Request(comment_url, data=data, headers=headers, method="PATCH")
+            with urllib.request.urlopen(req) as response:
+                print(f"✅ Updated PR comment with test version {version}")
+                return True
+        else:
+            # Create new comment
+            data = json.dumps({"body": comment_body}).encode('utf-8')
+            req = urllib.request.Request(comments_url, data=data, headers=headers)
+            with urllib.request.urlopen(req) as response:
+                print(f"✅ Created PR comment with test version {version}")
+                return True
+                
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
+        print(f"⚠️ Failed to update PR comment: {e}")
+        return False
+
 def inject_version(version: str, dev_mode: bool = False):
     """Update version in both _version.py and pyproject.toml"""
     print(f"🔁 Updating version to: {version}")
 
     # Update _version.py
-    version_content = VERSION_FILE.read_text()
+    version_content = VERSION_FILE.read_text(encoding='utf-8')
     # Handle both simple and multiple assignment formats
     if "__version__ = version =" in version_content:
         # Multiple assignment format: __version__ = version = 'value'
@@ -92,10 +204,10 @@ def inject_version(version: str, dev_mode: bool = False):
     else:
         # Simple assignment format: __version__ = 'value'
         new_version_content = VERSION_PATTERN.sub(f"__version__ = '{version}'", version_content)
-    VERSION_FILE.write_text(new_version_content)
+    VERSION_FILE.write_text(new_version_content, encoding='utf-8')
 
     # Update pyproject.toml
-    pyproject = PYPROJECT_FILE.read_text()
+    pyproject = PYPROJECT_FILE.read_text(encoding='utf-8')
     
     if dev_mode:
         # For dev builds, switch to static versioning
@@ -117,7 +229,7 @@ def inject_version(version: str, dev_mode: bool = False):
         # Remove hatch-vcs from build requirements
         new_pyproject = re.sub(r'requires\s*=\s*\["hatchling",\s*"hatch-vcs"\]', 'requires = ["hatchling"]', new_pyproject)
         
-        PYPROJECT_FILE.write_text(new_pyproject)
+        PYPROJECT_FILE.write_text(new_pyproject, encoding='utf-8')
     else:
         # For production builds, ensure we keep VCS-based versioning but clean up any dev modifications
         # Restore dynamic version if it was removed
@@ -139,7 +251,7 @@ def inject_version(version: str, dev_mode: bool = False):
         if 'hatch-vcs' not in pyproject:
             pyproject = re.sub(r'requires\s*=\s*\["hatchling"\]', 'requires = ["hatchling", "hatch-vcs"]', pyproject)
         
-        PYPROJECT_FILE.write_text(pyproject)
+        PYPROJECT_FILE.write_text(pyproject, encoding='utf-8')
 
 def main():
     dev_mode = "--dev" in sys.argv
@@ -160,6 +272,10 @@ def main():
             new_version = find_next_available_dev_version(base_version)
             inject_version(new_version, dev_mode=True)
             print("✅ Dev version auto-bumped for CI build.")
+            
+            # Update PR comment with install command
+            update_pr_comment(new_version)
+            
             sys.exit(0)
         else:
             # For production mode, ensure clean version management

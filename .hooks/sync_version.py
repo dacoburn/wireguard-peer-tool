@@ -82,6 +82,29 @@ def find_next_available_dev_version(base_version: str) -> str:
     print("❌ Could not find available .devN slot after 100 attempts.")
     sys.exit(1)
 
+def get_latest_git_tag_version() -> str | None:
+    """Get the latest version from git tags"""
+    try:
+        # Get the latest tag that looks like a version
+        output = subprocess.check_output(
+            ["git", "tag", "--sort=-version:refname", "--merged", "HEAD"], 
+            text=True
+        ).strip()
+        
+        if not output:
+            return None
+            
+        # Get the first (latest) tag
+        latest_tag = output.split('\n')[0]
+        
+        # Remove 'v' prefix if present
+        if latest_tag.startswith('v'):
+            latest_tag = latest_tag[1:]
+            
+        return latest_tag
+    except subprocess.CalledProcessError:
+        return None
+
 def get_github_repo_info():
     """Extract GitHub repo owner and name from git remote"""
     try:
@@ -267,8 +290,22 @@ def main():
 
     if current_version == previous_version:
         if dev_mode:
-            # For dev mode, find next available dev version
-            base_version = current_version.split(".dev")[0] if ".dev" in current_version else current_version
+            # For dev mode, use latest git tag as base version
+            git_tag_version = get_latest_git_tag_version()
+            if git_tag_version:
+                print(f"Latest git tag version: {git_tag_version}")
+                # Bump from the latest tag version
+                base_version = bump_patch_version(git_tag_version)
+                print(f"Base version for dev: {base_version}")
+            else:
+                print("No git tags found, using current version as base")
+                # Fallback to current version logic
+                base_version = current_version.split(".dev")[0] if ".dev" in current_version else current_version
+                # If the current version looks like a dev version from an old base, 
+                # try to extract the real base version
+                if ".dev" not in current_version:
+                    base_version = bump_patch_version(base_version)
+            
             new_version = find_next_available_dev_version(base_version)
             inject_version(new_version, dev_mode=True)
             print("✅ Dev version auto-bumped for CI build.")

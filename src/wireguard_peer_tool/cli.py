@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from wireguard_peer_tool._version import __version__
 from wireguard_peer_tool.core import Helper, db
@@ -26,8 +26,8 @@ DEFAULT_DNS = "1.1.1.1"
 DEFAULT_CLIENT_DIR = "./clients"
 
 # Global variables for caching master password
-_master_password_cache: str | None = None
-_salt_cache: bytes | None = None
+_master_password_cache: Optional[str] = None
+_salt_cache: Optional[bytes] = None
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def setup_logging() -> None:
     logger.propagate = False
 
 
-def get_master_password_and_salt() -> tuple[str | None, bytes | None]:
+def get_master_password_and_salt() -> Tuple[Optional[str], Optional[bytes]]:
     """Get master password and salt, caching for session"""
     global _master_password_cache, _salt_cache
 
@@ -104,15 +104,15 @@ def needs_elevated_permissions(command: str) -> bool:
     return command in elevated_commands
 
 
-def suggest_sudo_usage():
+def suggest_sudo_usage() -> None:
     """Suggest using sudo for elevated commands"""
 
 
 def encrypt_peer_data(
-    peer_data: dict[str, Any], master_password: str, salt: bytes
-) -> dict[str, Any]:
+    peer_data: Dict[str, Any], master_password: str, salt: bytes
+) -> Dict[str, Any]:
     """Encrypt sensitive peer data fields"""
-    encrypted_data: dict[str, Any] = {}
+    encrypted_data: Dict[str, Any] = {}
     # Only encrypt specific fields:
     # - private_key (encrypted)
     # - ip_address (encrypted)
@@ -132,7 +132,7 @@ def encrypt_peer_data(
     return encrypted_data
 
 
-def decrypt_peer_data(peer_row: dict, master_password: str | None = None) -> dict:
+def decrypt_peer_data(peer_row: Dict[str, Any], master_password: Optional[str] = None) -> Dict[str, Any]:
     """Decrypt peer data from database row (expects dict)"""
     if master_password is None:
         return dict(peer_row) if not isinstance(peer_row, dict) else peer_row
@@ -194,7 +194,7 @@ def get_server_private_key() -> str:
     return private_key
 
 
-def decrypt_server_config(config_row: dict) -> dict:
+def decrypt_server_config(config_row: Dict[str, Any]) -> Dict[str, Any]:
     """Decrypt server config if encryption is enabled. Always returns a dict."""
     if not config_row:
         return {}
@@ -223,7 +223,7 @@ def decrypt_server_config(config_row: dict) -> dict:
     return config
 
 
-def get_wireguard_interface_name() -> str | None:
+def get_wireguard_interface_name() -> Optional[str]:
     """Get the WireGuard interface name from config"""
     config = db.get_server_config()
     if not config:
@@ -351,7 +351,7 @@ def auto_regenerate_wg_config():
         generate_wg_conf_content(config_path)
 
 
-def generate_wg_conf_content(output_path: str | None = None) -> None:
+def generate_wg_conf_content(output_path: Optional[str] = None) -> None:
     """Generate WireGuard configuration file content from database"""
     config = db.get_server_config()
     if not config:
@@ -418,7 +418,7 @@ def get_next_ip() -> str:
     peer_rows = db.get_ips()
     # Decrypt peer IPs if needed
     master_password, _ = get_master_password_and_salt()
-    used_ips: list[str] = []
+    used_ips: List[str] = []
 
     for peer_row in peer_rows:
         peer = decrypt_peer_data(peer_row, master_password)
@@ -431,7 +431,7 @@ def get_next_ip() -> str:
     sys.exit(1)
 
 
-def generate_keypair() -> tuple[str, str]:
+def generate_keypair() -> Tuple[str, str]:
     """Generate WireGuard private and public key pair"""
     # Generate private key
     private_key_result = subprocess.run(
@@ -1102,7 +1102,7 @@ def debug_peer_data(args: argparse.Namespace) -> None:
 
 def _regenerate_public_key_from_private(
     private_key_encrypted: str, master_password: str
-) -> str | None:
+) -> Optional[str]:
     """Regenerate public key from encrypted private key"""
     try:
         private_key_plain = Helper.decrypt_database_field(
@@ -1323,7 +1323,7 @@ def repair_peer_zips(_args: argparse.Namespace) -> None:
     logger.info(f"\nCompleted: {repaired_count}/{total_peers} peer ZIP files repaired.")
 
 
-def check_wireguard_permissions() -> tuple[bool, str]:
+def check_wireguard_permissions() -> Tuple[bool, str]:
     """Check if we have permissions to access WireGuard tools"""
     try:
         result = subprocess.run(
@@ -1342,7 +1342,7 @@ def check_wireguard_permissions() -> tuple[bool, str]:
         return False, f"Error checking WireGuard permissions: {e}"
 
 
-def check_config_file_access() -> tuple[bool, str]:
+def check_config_file_access() -> Tuple[bool, str]:
     """Check if we can write to WireGuard config files"""
     config = db.get_server_config()
     if not config:

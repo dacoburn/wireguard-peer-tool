@@ -9,6 +9,7 @@ import os
 import secrets
 import tempfile
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any, Union
 
 import pyzipper
 import qrcode
@@ -42,8 +43,8 @@ class Helper:
 
     @staticmethod
     def extract_zip_with_optional_password(
-        zip_file, password=None, required_files=None
-    ):
+        zip_file: str, password: Optional[str] = None, required_files: Optional[List[str]] = None
+    ) -> Tuple[bool, bool, bool, str, Optional[str]]:
         """
         Try to extract a zip file with no password, then with password if provided.
         Returns (extracted_without_password, extracted_with_password, found_all,
@@ -91,7 +92,7 @@ class Helper:
         )
 
     @staticmethod
-    def create_password_protected_zip(zip_path, files, password):
+    def create_password_protected_zip(zip_path: str, files: List[Tuple[str, str]], password: str) -> None:
         """
         Create a password-protected zip at zip_path with the given files
         (list of (src, arcname)).
@@ -232,11 +233,11 @@ AllowedIPs = {allowed_ip}
         return config
 
     @staticmethod
-    def parse_wireguard_config(config_text):
+    def parse_wireguard_config(config_text: str) -> Dict[str, Any]:
         """Parse WireGuard configuration text into a structured dictionary"""
-        result = {"server_config": {}, "peers": {}}
+        result: Dict[str, Any] = {"server_config": {}, "peers": {}}
         lines = config_text.strip().splitlines()
-        current_peer = None
+        current_peer: Optional[Dict[str, Any]] = None
         peer_name = None
         last_comment = None
         in_peer_section = False
@@ -289,7 +290,7 @@ AllowedIPs = {allowed_ip}
         return result
 
     @staticmethod
-    def get_next_ip(ip_list):
+    def get_next_ip(ip_list: List[str]) -> str:
         """Get the next available IP address from a list of IPs"""
         if not ip_list:
             msg = "IP list is empty"
@@ -313,8 +314,8 @@ AllowedIPs = {allowed_ip}
 
     @staticmethod
     def is_zip_encrypted(
-        master_password, zip_password: str | dict
-    ) -> tuple[bool, bool]:
+        master_password: str, zip_password: Union[str, Dict[str, Any]]
+    ) -> Tuple[bool, bool]:
         """Check if a ZIP password is encrypted and valid.
         Returns a tuple (is_encrypted, is_valid)."""
         if master_password:
@@ -342,17 +343,17 @@ AllowedIPs = {allowed_ip}
 
     @staticmethod
     def handle_zip_password(
-        peer_data,
-        raw_peer_data,
-        master_password,
-        config,
-        peer_name,
-        db_update_callback,
-        generate_zip_password_func,
-        encrypt_database_field_func,
-        decrypt_database_field_func,
-        update_allowed=True,
-    ):
+        peer_data: Dict[str, Any],
+        raw_peer_data: Dict[str, Any],
+        master_password: str,
+        config: Dict[str, Any],
+        peer_name: str,
+        db_update_callback: Any,
+        generate_zip_password_func: Any,
+        encrypt_database_field_func: Any,
+        decrypt_database_field_func: Any,
+        update_allowed: bool = True,
+    ) -> str:
         """
         Handle zip password validation, encryption, and database updates.
         Returns the final zip password (decrypted for display/use).
@@ -679,7 +680,7 @@ AllowedIPs = {allowed_ip}
         return secrets.token_bytes(32)
 
     @staticmethod
-    def generate_client_config(peer_name: str, db_module):
+    def generate_client_config(peer_name: str, db_module: Any) -> Path:
         """Generate client configuration files and ZIP package"""
         # Get peer data from database
         peer_row = db_module.get_peer_by_name(peer_name)

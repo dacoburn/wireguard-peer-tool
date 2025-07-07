@@ -5,6 +5,7 @@ import sqlite3
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Dict, Optional, Union, Tuple, List, Any
 
 
 class ServerConfig:
@@ -24,7 +25,7 @@ class ServerConfig:
         dns: str,
         client_root: str,
         data_encrypted: int = 0,
-        encryption_salt: str | None = None,
+        encryption_salt: Optional[str] = None,
         endpoint: str = "palmdale.dactbc.com",
     ):
         self.config_path = config_path
@@ -90,7 +91,7 @@ class DB:
         self.init_db()
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> Any:
         """Context manager for database connections"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -99,7 +100,7 @@ class DB:
         finally:
             conn.close()
 
-    def init_db(self):
+    def init_db(self) -> None:
         """Initialize the database with required tables"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -153,7 +154,7 @@ class DB:
             cursor.execute("SELECT COUNT(*) FROM server_config")
             return cursor.fetchone()[0] > 0
 
-    def insert_server_config(self, config: ServerConfig):
+    def insert_server_config(self, config: ServerConfig) -> None:
         """Insert server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -184,7 +185,7 @@ class DB:
             )
             conn.commit()
 
-    def get_server_config(self) -> dict | None:
+    def get_server_config(self) -> Optional[Dict[str, Any]]:
         """Get server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -194,7 +195,7 @@ class DB:
                 return dict(row)
             return None
 
-    def update_server_config(self, updates: dict):
+    def update_server_config(self, updates: Dict[str, Any]) -> None:
         """Update server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -203,7 +204,7 @@ class DB:
             cursor.execute(f"UPDATE server_config SET {set_clause}", values)
             conn.commit()
 
-    def insert_peer_to_db(self, peer: PeerData):
+    def insert_peer_to_db(self, peer: PeerData) -> None:
         """Insert peer into database"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -225,7 +226,7 @@ class DB:
             )
             conn.commit()
 
-    def check_peer_exists(self, peer_name: str):
+    def check_peer_exists(self, peer_name: str) -> None:
         """Check if peer exists and exit if it does"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -233,7 +234,7 @@ class DB:
             if cursor.fetchone():
                 sys.exit(1)
 
-    def get_peer_by_name(self, peer_name: str) -> dict | None:
+    def get_peer_by_name(self, peer_name: str) -> Optional[Dict[str, Any]]:
         """Get peer by name"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -243,7 +244,7 @@ class DB:
                 return dict(row)
             return None
 
-    def remove_peer_from_db(self, peer_name: str) -> tuple | None:
+    def remove_peer_from_db(self, peer_name: str) -> Optional[Tuple[Any, ...]]:
         """Remove peer from database and return the removed peer data"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -260,7 +261,7 @@ class DB:
 
             return None
 
-    def list_peers(self) -> list:
+    def list_peers(self) -> List[Dict[str, Any]]:
         """List all peers"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -271,7 +272,7 @@ class DB:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_peers_list(self) -> list:
+    def get_peers_list(self) -> List[Dict[str, Any]]:
         """Get list of peers for config generation"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -281,7 +282,7 @@ class DB:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_ips(self) -> list:
+    def get_ips(self) -> List[Dict[str, Any]]:
         """Get all IP addresses"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -336,7 +337,7 @@ class DB:
         except Exception:
             return False
 
-    def get_all_peers_raw(self) -> list:
+    def get_all_peers_raw(self) -> List[Dict[str, Any]]:
         """Get all peers with all fields for repair operations"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -379,7 +380,7 @@ class DB:
 _db_instance = None
 
 
-def get_db_instance():
+def get_db_instance() -> DB:
     """Get or create the global database instance"""
     global _db_instance
     if _db_instance is None:
@@ -389,12 +390,12 @@ def get_db_instance():
 
 
 # Wrapper functions for CLI compatibility
-def get_server_config():
+def get_server_config() -> Optional[Dict[str, Any]]:
     """Get server configuration from database"""
     return get_db_instance().get_server_config()
 
 
-def save_server_config(server_config: dict):
+def save_server_config(server_config: Dict[str, Any]) -> None:
     """Save server configuration to database"""
     db_instance = get_db_instance()
 
@@ -425,27 +426,27 @@ def save_server_config(server_config: dict):
         db_instance.insert_server_config(config_obj)
 
 
-def update_server_config(key: str, value):
+def update_server_config(key: str, value: Any) -> None:
     """Update a single server configuration value"""
     get_db_instance().update_server_config({key: value})
 
 
-def get_all_peers():
+def get_all_peers() -> List[Dict[str, Any]]:
     """Get all peers from database"""
     return get_db_instance().get_peers_list()
 
 
-def get_peer_by_name(name: str):
+def get_peer_by_name(name: str) -> Optional[Dict[str, Any]]:
     """Get peer by name from database"""
     return get_db_instance().get_peer_by_name(name)
 
 
-def get_ips():
+def get_ips() -> List[Dict[str, Any]]:
     """Get all peer IPs from database"""
     return get_db_instance().get_ips()
 
 
-def add_peer(peer_data: dict):
+def add_peer(peer_data: Dict[str, Any]) -> None:
     """Add a peer to the database"""
     db_instance = get_db_instance()
 
@@ -471,26 +472,26 @@ def add_peer(peer_data: dict):
     db_instance.insert_peer_to_db(peer_obj)
 
 
-def remove_peer(name: str):
+def remove_peer(name: str) -> Optional[Tuple[Any, ...]]:
     """Remove a peer from the database"""
     return get_db_instance().remove_peer_from_db(name)
 
 
-def test_database_write_permissions():
+def test_database_write_permissions() -> bool:
     """Test if we can write to the database"""
     return get_db_instance().test_database_write_permissions()
 
 
-def get_all_peers_raw():
+def get_all_peers_raw() -> List[Dict[str, Any]]:
     """Get all peers with all fields for repair operations"""
     return get_db_instance().get_all_peers_raw()
 
 
-def update_peer_field(peer_name: str, field_name: str, value: str):
+def update_peer_field(peer_name: str, field_name: str, value: str) -> bool:
     """Update a specific field for a peer"""
     return get_db_instance().update_peer_field(peer_name, field_name, value)
 
 
-def update_peer_keys(peer_name: str, private_key: str, public_key: str):
+def update_peer_keys(peer_name: str, private_key: str, public_key: str) -> bool:
     """Update both private and public keys for a peer"""
     return get_db_instance().update_peer_keys(peer_name, private_key, public_key)

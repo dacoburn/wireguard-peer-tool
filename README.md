@@ -31,7 +31,7 @@ Or install from source:
 
 ```bash
 git clone https://github.com/dacoburn/wireguard-peer-tool.git
-cd wireguard-peer-tool
+cd wireguard_peer_tool
 pip install -e .
 ```
 
@@ -299,7 +299,7 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 ### Development Setup
 ```bash
 git clone https://github.com/dacoburn/wireguard-peer-tool.git
-cd wireguard-peer-tool
+cd wireguard_peer_tool
 pip install -e ".[dev]"
 pre-commit install
 ```
@@ -307,7 +307,7 @@ pre-commit install
 ### Running Tests
 ```bash
 pytest
-pytest --cov=wireguard_manager tests/
+pytest --cov=wireguard_peer_tool tests/
 ```
 
 ## License

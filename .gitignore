@@ -320,3 +320,6 @@ cache/
 # Ignore specific project files and folders
 *.json
 test.py
+
+# Ruff Linting Cache
+.ruff_cache/

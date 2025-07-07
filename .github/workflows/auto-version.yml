@@ -99,7 +99,7 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        git add src/wireguard_manager/_version.py
+        git add src/wireguard_peer_tool/_version.py
         git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }} [skip-version]"
         git tag "v${{ steps.bump.outputs.new_version }}"
         

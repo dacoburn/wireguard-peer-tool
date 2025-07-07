@@ -1,9 +1,11 @@
 """Module for managing WireGuard peers in a database"""
-import sqlite3
-from typing import Optional
 import os
-from pathlib import Path
+import sqlite3
+import sys
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Optional
+
 
 class ServerConfig:
     """Class representing the server configuration"""
@@ -12,7 +14,7 @@ class ServerConfig:
                  listen_port: int, private_key: str, public_key: str,
                  post_up: str, post_down: str, table: str,  dns: str, client_root: str,
                  data_encrypted: int = 0, encryption_salt: Optional[str] = None,
-                 endpoint: str = 'palmdale.dactbc.com'):
+                 endpoint: str = "palmdale.dactbc.com"):
         self.config_path = config_path
         self.interface_name = interface_name
         self.address = address
@@ -72,9 +74,9 @@ class DB:
         """Initialize the database with required tables"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Create server_config table
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS server_config (
                     id INTEGER PRIMARY KEY,
                     config_path TEXT NOT NULL,
@@ -92,10 +94,10 @@ class DB:
                     encryption_salt TEXT,
                     endpoint TEXT DEFAULT 'palmdale.dactbc.com'
                 )
-            ''')
-            
+            """)
+
             # Create peers table
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS peers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
@@ -107,8 +109,8 @@ class DB:
                     zip_path TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
-            
+            """)
+
             conn.commit()
 
     def check_if_server_config_exists(self) -> bool:
@@ -122,13 +124,13 @@ class DB:
         """Insert server configuration"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO server_config 
-                (config_path, interface_name, address, listen_port, private_key, 
+            cursor.execute("""
+                INSERT INTO server_config
+                (config_path, interface_name, address, listen_port, private_key,
                  public_key, post_up, post_down, table_name, dns, client_root,
                  data_encrypted, encryption_salt, endpoint)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
+            """, (
                 config.config_path, config.interface_name, config.address,
                 config.listen_port, config.private_key, config.public_key,
                 config.post_up, config.post_down, config.table,
@@ -160,11 +162,11 @@ class DB:
         """Insert peer into database"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO peers (name, public_key, private_key, ip_address, 
+            cursor.execute("""
+                INSERT INTO peers (name, public_key, private_key, ip_address,
                                  allowed_ips, zip_password, zip_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
+            """, (
                 peer.name, peer.public_key, peer.private_key,
                 peer.ip_address, peer.allowed_ips, peer.zip_password,
                 str(peer.zip_path)
@@ -177,8 +179,7 @@ class DB:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM peers WHERE name = ?", (peer_name,))
             if cursor.fetchone():
-                print(f"Peer '{peer_name}' already exists.")
-                exit(1)
+                sys.exit(1)
 
     def get_peer_by_name(self, peer_name: str) -> Optional[dict]:
         """Get peer by name"""
@@ -194,17 +195,17 @@ class DB:
         """Remove peer from database and return the removed peer data"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # First, get the peer data before removing
             cursor.execute("SELECT * FROM peers WHERE name = ?", (peer_name,))
             peer_data = cursor.fetchone()
-            
+
             if peer_data:
                 # Remove the peer
                 cursor.execute("DELETE FROM peers WHERE name = ?", (peer_name,))
                 conn.commit()
                 return tuple(peer_data)
-            
+
             return None
 
     def list_peers(self) -> list:
@@ -272,7 +273,7 @@ def get_server_config():
 def save_server_config(server_config: dict):
     """Save server configuration to database"""
     db_instance = get_db_instance()
-    
+
     # Convert dict to ServerConfig object
     config_obj = ServerConfig(
         config_path=server_config.get("config_path", ""),
@@ -290,7 +291,7 @@ def save_server_config(server_config: dict):
         encryption_salt=server_config.get("encryption_salt"),
         endpoint=server_config.get("endpoint", "")
     )
-    
+
     if db_instance.check_if_server_config_exists():
         # Update existing config
         updates = {k: v for k, v in server_config.items() if v is not None}
@@ -318,7 +319,11 @@ def get_ips():
 def add_peer(peer_data: dict):
     """Add a peer to the database"""
     db_instance = get_db_instance()
-    
+
+    # Get server config to determine client root path
+    server_config = get_server_config()
+    client_root = server_config.get("client_config_root", "./clients") if server_config else "./clients"
+
     # Convert dict to PeerData object
     peer_obj = PeerData(
         name=peer_data["name"],
@@ -326,10 +331,10 @@ def add_peer(peer_data: dict):
         private_key=peer_data["private_key"],
         ip_address=peer_data["ip_address"],
         allowed_ips=peer_data.get("allowed_ips", f"{peer_data['ip_address']}/32"),
-        zip_path=Path("./clients") / peer_data["name"] / f"{peer_data['name']}.zip",
+        zip_path=Path(client_root) / peer_data["name"] / f"{peer_data['name']}.zip",
         zip_password=peer_data["zip_password"]
     )
-    
+
     db_instance.insert_peer_to_db(peer_obj)
 
 def remove_peer(name: str):

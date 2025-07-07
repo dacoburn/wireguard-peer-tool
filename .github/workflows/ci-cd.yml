@@ -105,6 +105,7 @@ jobs:
         # Temporarily switch to code-based version for building
         cp pyproject.toml pyproject.toml.backup
         sed -i 's/source = "vcs"/source = "code"/' pyproject.toml
+        sed -i '/\[tool\.hatch\.version\]/a path = "src/wireguard_peer_tool/_version.py"' pyproject.toml
         
     - name: Build package
       run: |

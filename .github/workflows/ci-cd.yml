@@ -85,12 +85,13 @@ jobs:
         
         # Create dev version based on branch and commit
         BRANCH_NAME=${GITHUB_REF#refs/heads/}
-        BRANCH_NAME=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9.-]/_/g')
+        BRANCH_NAME=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9]//g')
         COMMIT_SHORT=${GITHUB_SHA:0:7}
         BUILD_NUMBER=${GITHUB_RUN_NUMBER}
         
-        # Create dev version: 1.0.0.dev20231201001+branch.abc1234
-        DEV_VERSION="${BASE_VERSION}.dev${BUILD_NUMBER}+${BRANCH_NAME}.${COMMIT_SHORT}"
+        # Create PEP 440 compliant dev version: 1.0.0.dev20231201001
+        # Local version identifiers are not supported by TestPyPI
+        DEV_VERSION="${BASE_VERSION}.dev${BUILD_NUMBER}"
         
         echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
         echo "dev_version=$DEV_VERSION" >> $GITHUB_OUTPUT

@@ -350,13 +350,13 @@ class DB:
         # Whitelist of allowed field names to prevent SQL injection
         # Based on the peers table schema
         allowed_fields = {
-            "name", "public_key", "private_key", "ip_address", 
+            "name", "public_key", "private_key", "ip_address",
             "allowed_ips", "zip_password", "zip_path", "created_at"
         }
-        
+
         if field_name not in allowed_fields:
             raise ValueError(f"Invalid field name: {field_name}")
-        
+
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()

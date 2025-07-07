@@ -38,22 +38,22 @@ def setup_logging() -> None:
     # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    
+
     # Create error handler for stderr
     error_handler = logging.StreamHandler(sys.stderr)
     error_handler.setLevel(logging.ERROR)
     error_handler.addFilter(lambda record: record.levelno >= logging.ERROR)
-    
+
     # Create formatter
     formatter = logging.Formatter('%(message)s')
     console_handler.setFormatter(formatter)
     error_handler.setFormatter(formatter)
-    
+
     # Configure root logger
     logger.setLevel(logging.INFO)
     logger.addHandler(console_handler)
     logger.addHandler(error_handler)
-    
+
     # Prevent duplicate messages
     logger.propagate = False
 
@@ -1349,7 +1349,7 @@ def main() -> None:
     """Main entry point"""
     # Setup logging first
     setup_logging()
-    
+
     parser = argparse.ArgumentParser(
         description=("WireGuard Manager - A modern, secure Python-based CLI "
                     "tool for managing WireGuard VPN servers"),

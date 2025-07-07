@@ -102,9 +102,17 @@ jobs:
         # Update the version file with dev version
         echo "__version__ = \"${{ steps.version.outputs.dev_version }}\"" > src/wireguard_peer_tool/_version.py
         
+        # Temporarily switch to code-based version for building
+        cp pyproject.toml pyproject.toml.backup
+        sed -i 's/source = "vcs"/source = "code"/' pyproject.toml
+        
     - name: Build package
       run: |
         hatch build
+        
+    - name: Restore original pyproject.toml
+      run: |
+        mv pyproject.toml.backup pyproject.toml
         
     - name: Publish to Test PyPI
       uses: pypa/gh-action-pypi-publish@release/v1

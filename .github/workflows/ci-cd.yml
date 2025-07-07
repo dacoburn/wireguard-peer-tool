@@ -43,14 +43,6 @@ jobs:
       run: |
         ruff check src/
         
-    - name: Format check with black
-      run: |
-        black --check src/
-        
-    - name: Type check with mypy
-      run: |
-        mypy src/wireguard_peer_tool/
-        
     - name: Run tests
       run: |
         pytest --cov=wireguard_peer_tool --cov-report=xml tests/

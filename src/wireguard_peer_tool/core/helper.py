@@ -596,7 +596,7 @@ AllowedIPs = {allowed_ip}
         except Exception as e:
             # Don't raise immediately - let the calling function handle it
             msg = f"Decryption failed: {e}"
-            raise ValueError(msg)
+            raise ValueError(msg) from e
 
     @staticmethod
     def generate_zip_password(length: int = 16) -> str:

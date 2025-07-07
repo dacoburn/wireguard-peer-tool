@@ -10,6 +10,7 @@ import csv
 import getpass
 import ipaddress
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -27,6 +28,34 @@ DEFAULT_CLIENT_DIR = "./clients"
 # Global variables for caching master password
 _master_password_cache: str | None = None
 _salt_cache: bytes | None = None
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+
+def setup_logging() -> None:
+    """Setup logging configuration"""
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    
+    # Create error handler for stderr
+    error_handler = logging.StreamHandler(sys.stderr)
+    error_handler.setLevel(logging.ERROR)
+    error_handler.addFilter(lambda record: record.levelno >= logging.ERROR)
+    
+    # Create formatter
+    formatter = logging.Formatter('%(message)s')
+    console_handler.setFormatter(formatter)
+    error_handler.setFormatter(formatter)
+    
+    # Configure root logger
+    logger.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
+    logger.addHandler(error_handler)
+    
+    # Prevent duplicate messages
+    logger.propagate = False
 
 
 def get_master_password_and_salt() -> tuple[str | None, bytes | None]:
@@ -195,11 +224,11 @@ def get_wireguard_interface_name() -> str | None:
     config = db.get_server_config()
     if not config:
         return None
-    
+
     config_path = config.get("config_path")
     if not config_path:
         return None
-    
+
     # Extract interface name from config path
     return Path(config_path).stem
 
@@ -209,7 +238,7 @@ def add_peer_to_wireguard_interface(peer_public_key: str, allowed_ips: str) -> b
     interface_name = get_wireguard_interface_name()
     if not interface_name:
         return False
-    
+
     try:
         # Use wg set to add the peer dynamically
         subprocess.run([
@@ -229,7 +258,7 @@ def remove_peer_from_wireguard_interface(peer_public_key: str) -> bool:
     interface_name = get_wireguard_interface_name()
     if not interface_name:
         return False
-    
+
     try:
         # Use wg set to remove the peer dynamically
         subprocess.run([
@@ -249,22 +278,25 @@ def sync_all_peers_to_wireguard_interface() -> bool:
     interface_name = get_wireguard_interface_name()
     if not interface_name:
         return False
-    
+
     # Get current WireGuard peers
     try:
         result = subprocess.run([
             "wg", "show", interface_name, "peers"
         ], check=True, capture_output=True, text=True)
-        current_wg_peers = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+        current_wg_peers = (
+            set(result.stdout.strip().split("\n"))
+            if result.stdout.strip() else set()
+        )
     except subprocess.CalledProcessError:
         return False
     except Exception:
         return False
-    
+
     # Get all peers from database
     peers = db.get_all_peers()
     master_password, _ = get_master_password_and_salt()
-    
+
     # Get database peer public keys
     db_peer_keys = set()
     for peer_row in peers:
@@ -272,25 +304,25 @@ def sync_all_peers_to_wireguard_interface() -> bool:
         public_key = peer.get("public_key")
         if public_key:
             db_peer_keys.add(public_key)
-    
+
     # Remove peers that are in WireGuard but not in database
     removed_count = 0
     for wg_peer_key in current_wg_peers:
         if wg_peer_key and wg_peer_key not in db_peer_keys:
             if remove_peer_from_wireguard_interface(wg_peer_key):
                 removed_count += 1
-    
+
     # Add/update peers from database
     added_count = 0
     for peer_row in peers:
         peer = decrypt_peer_data(peer_row, master_password)
         public_key = peer.get("public_key")
         allowed_ips = peer.get("allowed_ips", f"{peer.get('ip_address')}/32")
-        
+
         if public_key:
             if add_peer_to_wireguard_interface(public_key, allowed_ips):
                 added_count += 1
-    
+
     return added_count == len(peers)
 
 
@@ -553,13 +585,13 @@ def add_peer(args: argparse.Namespace) -> None:
     # Check if peer already exists
     existing_peer = db.get_peer_by_name(peer_name)
     if existing_peer:
-        print(f"Error: Peer '{peer_name}' already exists.")
+        logger.error(f"Peer '{peer_name}' already exists.")
         sys.exit(1)
 
     # Get server config
     config = db.get_server_config()
     if not config:
-        print("Error: Server not initialized. Run 'init' command first.")
+        logger.error("Server not initialized. Run 'init' command first.")
         sys.exit(1)
 
     # Generate keys
@@ -589,33 +621,35 @@ def add_peer(args: argparse.Namespace) -> None:
     # Add to database
     try:
         db.add_peer(peer_data)
-        print(f"Successfully added peer '{peer_name}' with IP {ip_address}")
+        logger.info(f"Successfully added peer '{peer_name}' with IP {ip_address}")
     except Exception:
-        print(f"Error: Failed to add peer '{peer_name}' to database.")
+        logger.error(f"Failed to add peer '{peer_name}' to database.")
         sys.exit(1)
 
     # Generate client config
     try:
         Helper.generate_client_config(peer_name, db)
-        print(f"Generated client configuration files for '{peer_name}'")
+        logger.info(f"Generated client configuration files for '{peer_name}'")
     except Exception:
-        print(f"Warning: Failed to generate client config for '{peer_name}'")
+        logger.warning(f"Failed to generate client config for '{peer_name}'")
         sys.exit(1)
 
     # Auto-regenerate WireGuard config
     auto_regenerate_wg_config()
-    print("Updated WireGuard server configuration")
+    logger.info("Updated WireGuard server configuration")
 
     # Add peer to running WireGuard interface without restart
     allowed_ips = f"{ip_address}/32"
     if add_peer_to_wireguard_interface(public_key, allowed_ips):
-        print(f"Added peer '{peer_name}' to running WireGuard interface")
+        logger.info(f"Added peer '{peer_name}' to running WireGuard interface")
     else:
-        print(f"Warning: Failed to add peer '{peer_name}' to running WireGuard interface")
+        logger.warning(
+            f"Failed to add peer '{peer_name}' to running WireGuard interface"
+        )
 
     # Dynamically add peer to running WireGuard interface
     if not add_peer_to_wireguard_interface(public_key, f"{ip_address}/32"):
-        print("Warning: Failed to add peer to running WireGuard interface")
+        logger.warning("Failed to add peer to running WireGuard interface")
 
 
 def remove_peer(args: argparse.Namespace) -> None:
@@ -625,7 +659,7 @@ def remove_peer(args: argparse.Namespace) -> None:
     # Check if peer exists and get its public key before removing
     peer_row = db.get_peer_by_name(peer_name)
     if not peer_row:
-        print(f"Error: Peer '{peer_name}' not found.")
+        logger.error(f"Peer '{peer_name}' not found.")
         sys.exit(1)
 
     # Decrypt peer data to get public key
@@ -636,9 +670,9 @@ def remove_peer(args: argparse.Namespace) -> None:
     # Remove from database
     try:
         db.remove_peer(peer_name)
-        print(f"Successfully removed peer '{peer_name}' from database")
+        logger.info(f"Successfully removed peer '{peer_name}' from database")
     except Exception:
-        print(f"Error: Failed to remove peer '{peer_name}' from database.")
+        logger.error(f"Failed to remove peer '{peer_name}' from database.")
         sys.exit(1)
 
     # Remove client files
@@ -649,37 +683,41 @@ def remove_peer(args: argparse.Namespace) -> None:
         if client_dir.exists():
             try:
                 shutil.rmtree(client_dir)
-                print(f"Removed client files for '{peer_name}'")
+                logger.info(f"Removed client files for '{peer_name}'")
             except Exception:
-                print(f"Warning: Failed to remove client files for '{peer_name}'")
+                logger.warning(f"Failed to remove client files for '{peer_name}'")
 
     # Auto-regenerate WireGuard config
     auto_regenerate_wg_config()
-    print("Updated WireGuard server configuration")
+    logger.info("Updated WireGuard server configuration")
 
     # Remove peer from running WireGuard interface without restart
     if peer_public_key and remove_peer_from_wireguard_interface(peer_public_key):
-        print(f"Removed peer '{peer_name}' from running WireGuard interface")
+        logger.info(f"Removed peer '{peer_name}' from running WireGuard interface")
     else:
-        print(f"Warning: Failed to remove peer '{peer_name}' from running WireGuard interface")
+        logger.warning(
+            f"Failed to remove peer '{peer_name}' from running WireGuard interface"
+        )
 
     # Dynamically remove peer from running WireGuard interface
     public_key = peer_row.get("public_key")
     if public_key and not remove_peer_from_wireguard_interface(public_key):
-        print("Warning: Failed to remove peer from running WireGuard interface")
+        logger.warning("Failed to remove peer from running WireGuard interface")
 
 
 def list_peers(_args: argparse.Namespace) -> None:
     """List all peers"""
     peers = db.get_all_peers()
     if not peers:
-        print("No peers found.")
+        logger.info("No peers found.")
         return
 
     master_password, _ = get_master_password_and_salt()
 
-    print(f"{'Name':<20} {'IP Address':<15} {'Public Key':<44} {'Status':<10}")
-    print("-" * 90)
+    logger.info(
+        f"{'Name':<20} {'IP Address':<15} {'Public Key':<44} {'Status':<10}"
+    )
+    logger.info("-" * 90)
 
     for peer_row in peers:
         peer = decrypt_peer_data(peer_row, master_password)
@@ -695,7 +733,10 @@ def list_peers(_args: argparse.Namespace) -> None:
         else:
             zip_status = "Unknown"
 
-        print(f"{peer['name']:<20} {peer['ip_address']:<15} {peer['public_key']:<44} {zip_status:<10}")
+        logger.info(
+            f"{peer['name']:<20} {peer['ip_address']:<15} "
+            f"{peer['public_key']:<44} {zip_status:<10}"
+        )
 
 
 
@@ -705,21 +746,23 @@ def show_peer(args: argparse.Namespace) -> None:
 
     peer_row = db.get_peer_by_name(peer_name)
     if not peer_row:
-        print(f"Error: Peer '{peer_name}' not found.")
+        logger.error(f"Peer '{peer_name}' not found.")
         sys.exit(1)
 
     master_password, _ = get_master_password_and_salt()
     peer = decrypt_peer_data(peer_row, master_password)
 
-    print(f"Peer Details: {peer['name']}")
-    print("=" * 50)
-    print(f"Name:           {peer['name']}")
-    print(f"IP Address:     {peer['ip_address']}")
-    print(f"Allowed IPs:    {peer.get('allowed_ips', peer['ip_address'] + '/32')}")
-    print(f"Public Key:     {peer['public_key']}")
-    print(f"Private Key:    {peer['private_key']}")
-    print(f"ZIP Password:   {peer.get('zip_password', 'N/A')}")
-    print(f"Created:        {peer.get('created_at', 'Unknown')}")
+    logger.info(f"Peer Details: {peer['name']}")
+    logger.info("=" * 50)
+    logger.info(f"Name:           {peer['name']}")
+    logger.info(f"IP Address:     {peer['ip_address']}")
+    logger.info(
+        f"Allowed IPs:    {peer.get('allowed_ips', peer['ip_address'] + '/32')}"
+    )
+    logger.info(f"Public Key:     {peer['public_key']}")
+    logger.info(f"Private Key:    {peer['private_key']}")
+    logger.info(f"ZIP Password:   {peer.get('zip_password', 'N/A')}")
+    logger.info(f"Created:        {peer.get('created_at', 'Unknown')}")
 
     # Show ZIP file path
     config = db.get_server_config()
@@ -728,11 +771,11 @@ def show_peer(args: argparse.Namespace) -> None:
         client_root = config.get("client_config_root", "./clients")
         zip_path = Path(client_root) / peer_name / f"{peer_name}.zip"
         if zip_path.exists():
-            print(f"ZIP File:       {zip_path} (exists)")
+            logger.info(f"ZIP File:       {zip_path} (exists)")
         else:
-            print(f"ZIP File:       {zip_path} (missing)")
+            logger.info(f"ZIP File:       {zip_path} (missing)")
     else:
-        print("ZIP File:       Unable to determine path (no server config)")
+        logger.info("ZIP File:       Unable to determine path (no server config)")
 
 
 def regenerate_wg_conf(args: argparse.Namespace) -> None:
@@ -761,8 +804,6 @@ def update_config(args: argparse.Namespace) -> None:
     try:
         for key, value in updates.items():
             db.update_server_config(key, value)
-        for key, value in updates.items():
-            pass
     except Exception:
         sys.exit(1)
 
@@ -789,7 +830,9 @@ def restart_wireguard(_args: argparse.Namespace) -> None:
     # Start interface
     try:
         subprocess.run(["wg-quick", "up", config_path], check=True)
-        print(f"Successfully restarted WireGuard interface '{interface_name}'")
+        logger.info(
+            f"Successfully restarted WireGuard interface '{interface_name}'"
+        )
     except subprocess.CalledProcessError:
         sys.exit(1)
 
@@ -798,26 +841,29 @@ def sync_peers_to_interface(_args: argparse.Namespace) -> None:
     """Sync all database peers to the running WireGuard interface without restart"""
     interface_name = get_wireguard_interface_name()
     if not interface_name:
-        print("Error: Could not determine WireGuard interface name")
+        logger.error("Could not determine WireGuard interface name")
         sys.exit(1)
-    
+
     # Get current WireGuard peers
     try:
         result = subprocess.run([
             "wg", "show", interface_name, "peers"
         ], check=True, capture_output=True, text=True)
-        current_wg_peers = set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
+        current_wg_peers = (
+            set(result.stdout.strip().split("\n"))
+            if result.stdout.strip() else set()
+        )
     except subprocess.CalledProcessError:
-        print("Error: Failed to get current WireGuard peers")
+        logger.error("Failed to get current WireGuard peers")
         sys.exit(1)
     except Exception:
-        print("Error: Failed to get current WireGuard peers")
+        logger.error("Failed to get current WireGuard peers")
         sys.exit(1)
-    
+
     # Get all peers from database
     peers = db.get_all_peers()
     master_password, _ = get_master_password_and_salt()
-    
+
     # Get database peer public keys
     db_peer_keys = set()
     db_peer_names = {}  # Map public key to name for reporting
@@ -827,17 +873,19 @@ def sync_peers_to_interface(_args: argparse.Namespace) -> None:
         if public_key:
             db_peer_keys.add(public_key)
             db_peer_names[public_key] = peer.get("name", "unknown")
-    
+
     # Remove peers that are in WireGuard but not in database
     removed_count = 0
     for wg_peer_key in current_wg_peers:
         if wg_peer_key and wg_peer_key not in db_peer_keys:
             if remove_peer_from_wireguard_interface(wg_peer_key):
-                print(f"Removed orphaned peer: {wg_peer_key[:16]}...")
+                logger.info(f"Removed orphaned peer: {wg_peer_key[:16]}...")
                 removed_count += 1
             else:
-                print(f"Warning: Failed to remove orphaned peer: {wg_peer_key[:16]}...")
-    
+                logger.warning(
+                    f"Failed to remove orphaned peer: {wg_peer_key[:16]}..."
+                )
+
     # Add/update peers from database
     added_count = 0
     for peer_row in peers:
@@ -845,22 +893,24 @@ def sync_peers_to_interface(_args: argparse.Namespace) -> None:
         public_key = peer.get("public_key")
         allowed_ips = peer.get("allowed_ips", f"{peer.get('ip_address')}/32")
         peer_name = peer.get("name", "unknown")
-        
+
         if public_key:
             if add_peer_to_wireguard_interface(public_key, allowed_ips):
                 added_count += 1
             else:
-                print(f"Warning: Failed to add/update peer '{peer_name}' to WireGuard interface")
-    
+                logger.warning(
+                    f"Failed to add/update peer '{peer_name}' to WireGuard interface"
+                )
+
     # Report results
-    print(f"Sync completed:")
-    print(f"  - Removed {removed_count} orphaned peer(s)")
-    print(f"  - Added/updated {added_count}/{len(peers)} database peer(s)")
-    
+    logger.info("Sync completed:")
+    logger.info(f"  - Removed {removed_count} orphaned peer(s)")
+    logger.info(f"  - Added/updated {added_count}/{len(peers)} database peer(s)")
+
     if added_count == len(peers) and removed_count >= 0:
-        print("Successfully synced all peers to running WireGuard interface")
+        logger.info("Successfully synced all peers to running WireGuard interface")
     else:
-        print("Warning: Not all peers were successfully synced")
+        logger.warning("Not all peers were successfully synced")
         sys.exit(1)
 
 
@@ -897,7 +947,7 @@ def import_peers(args: argparse.Namespace) -> None:
     file_path = args.file
 
     if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' not found.")
+        logger.error(f"File '{file_path}' not found.")
         sys.exit(1)
 
     try:
@@ -909,10 +959,10 @@ def import_peers(args: argparse.Namespace) -> None:
                 reader = csv.DictReader(f)
                 peer_data = list(reader)
         else:
-            print("Error: File must be either .json or .csv format.")
+            logger.error("File must be either .json or .csv format.")
             sys.exit(1)
     except Exception:
-        print(f"Error: Failed to read or parse file '{file_path}'.")
+        logger.error(f"Failed to read or parse file '{file_path}'.")
         sys.exit(1)
 
     master_password, salt = get_master_password_and_salt()
@@ -921,13 +971,13 @@ def import_peers(args: argparse.Namespace) -> None:
     total_peers = len(peer_data)
     imported_peers = []  # Track successfully imported peers for WireGuard sync
 
-    print(f"Importing {total_peers} peer(s) from '{file_path}'...")
+    logger.info(f"Importing {total_peers} peer(s) from '{file_path}'...")
 
     for peer in peer_data:
         try:
             # Check if peer already exists
             if db.get_peer_by_name(peer["name"]):
-                print(f"  - Skipped '{peer['name']}' (already exists)")
+                logger.info(f"  - Skipped '{peer['name']}' (already exists)")
                 skipped_count += 1
                 continue
 
@@ -939,39 +989,47 @@ def import_peers(args: argparse.Namespace) -> None:
                 peer = encrypt_peer_data(peer, master_password, salt)
 
             db.add_peer(peer)
-            print(f"  ✓ Imported peer '{peer['name']}'")
+            logger.info(f"  ✓ Imported peer '{peer['name']}'")
             imported_count += 1
             imported_peers.append(original_peer_data)
         except Exception:
-            print(f"  ✗ Failed to import peer '{peer.get('name', 'unknown')}'")
+            logger.error(f"  ✗ Failed to import peer '{peer.get('name', 'unknown')}'")
 
-    print(f"\nCompleted: {imported_count} imported, {skipped_count} skipped")
+    logger.info(f"\nCompleted: {imported_count} imported, {skipped_count} skipped")
 
     # Auto-regenerate WireGuard config
     if imported_count > 0:
         auto_regenerate_wg_config()
-        print("Updated WireGuard server configuration")
+        logger.info("Updated WireGuard server configuration")
 
         # Add imported peers to running WireGuard interface without restart
         wg_success_count = 0
         for peer_data in imported_peers:
             public_key = peer_data.get("public_key")
-            allowed_ips = peer_data.get("allowed_ips", f"{peer_data.get('ip_address')}/32")
-            
+            allowed_ips = peer_data.get(
+                "allowed_ips", f"{peer_data.get('ip_address')}/32"
+            )
+
             if public_key and add_peer_to_wireguard_interface(public_key, allowed_ips):
                 wg_success_count += 1
 
         if wg_success_count > 0:
-            print(f"Added {wg_success_count}/{imported_count} imported peers to running WireGuard interface")
+            logger.info(
+                f"Added {wg_success_count}/{imported_count} imported peers "
+                "to running WireGuard interface"
+            )
         if wg_success_count < imported_count:
-            print(f"Warning: {imported_count - wg_success_count} peers failed to be added to running WireGuard interface")
+            logger.warning(
+                f"{imported_count - wg_success_count} peers failed to be added "
+                "to running WireGuard interface"
+            )
 
 
 def peer_zip_info(_args: argparse.Namespace) -> None:
     """View ZIP information for all peers"""
     peers = db.get_all_peers()
     if not peers:
-        print("No peers found.")
+        logger.info("No peers found.")
         return
 
     master_password, _ = get_master_password_and_salt()
@@ -983,16 +1041,20 @@ def peer_zip_info(_args: argparse.Namespace) -> None:
         config = decrypt_server_config(config)
         client_root = config.get("client_config_root", "./clients")
 
-    print(f"{'Peer Name':<20} {'ZIP Password':<20} {'ZIP Path':<50} {'Status':<10}")
-    print("-" * 100)
+    logger.info(
+        f"{'Peer Name':<20} {'ZIP Password':<20} {'ZIP Path':<50} {'Status':<10}"
+    )
+    logger.info("-" * 100)
 
     for peer_row in peers:
         peer = decrypt_peer_data(peer_row, master_password)
         zip_path = Path(client_root) / peer["name"] / f"{peer['name']}.zip"
         zip_status = "Exists" if zip_path.exists() else "Missing"
         zip_password = peer.get("zip_password", "N/A")
-        
-        print(f"{peer['name']:<20} {zip_password:<20} {str(zip_path):<50} {zip_status:<10}")
+
+        logger.info(
+            f"{peer['name']:<20} {zip_password:<20} {zip_path!s:<50} {zip_status:<10}"
+        )
 
 
 def debug_peer_data(args: argparse.Namespace) -> None:
@@ -1027,19 +1089,21 @@ def debug_peer_data(args: argparse.Namespace) -> None:
                         pass
 
 
-def _regenerate_public_key_from_private(private_key_encrypted: str, master_password: str) -> str | None:
+def _regenerate_public_key_from_private(
+    private_key_encrypted: str, master_password: str
+) -> str | None:
     """Regenerate public key from encrypted private key"""
     try:
         private_key_plain = Helper.decrypt_database_field(
             private_key_encrypted, master_password
         )
-        
+
         # Check if we got a valid WireGuard private key (44 chars, base64-like)
         if (private_key_plain and
             len(private_key_plain) == 44 and
             private_key_plain != private_key_encrypted and
             not private_key_plain.startswith("{")):
-            
+
             # Successfully decrypted private key, regenerate public key
             result = subprocess.run([
                 "wg", "pubkey"
@@ -1054,11 +1118,11 @@ def _regenerate_public_key_from_private(private_key_encrypted: str, master_passw
     return None
 
 
-def _repair_unencrypted_field(peer_name: str, field_name: str, field_value: str, 
+def _repair_unencrypted_field(peer_name: str, field_name: str, field_value: str,
                              master_password: str, peer_data: dict) -> bool:
     """Repair a field that should not be encrypted but appears to be"""
     needs_repair = False
-    
+
     try:
         decrypted_value = Helper.decrypt_database_field(field_value, master_password)
 
@@ -1078,7 +1142,9 @@ def _repair_unencrypted_field(peer_name: str, field_name: str, field_value: str,
                         private_key_encrypted, master_password
                     )
                     if regenerated_public_key:
-                        db.update_peer_field(peer_name, field_name, regenerated_public_key)
+                        db.update_peer_field(
+                            peer_name, field_name, regenerated_public_key
+                        )
                         needs_repair = True
         else:
             # Decryption worked, update the database with the decrypted value
@@ -1087,7 +1153,7 @@ def _repair_unencrypted_field(peer_name: str, field_name: str, field_value: str,
 
     except Exception:
         pass
-    
+
     return needs_repair
 
 
@@ -1095,11 +1161,11 @@ def _repair_encrypted_field(peer_name: str, field_name: str, field_value: str,
                            master_password: str, salt: bytes) -> bool:
     """Repair a field that should be encrypted"""
     needs_repair = False
-    
+
     # Check if this field is unencrypted (doesn't start with JSON format)
     if (isinstance(field_value, str) and
         not field_value.strip().startswith("{")):
-        
+
         # Encrypt the field
         try:
             encrypted_value = Helper.encrypt_database_field(
@@ -1109,17 +1175,17 @@ def _repair_encrypted_field(peer_name: str, field_name: str, field_value: str,
             needs_repair = True
         except Exception:
             pass
-            
+
     elif field_value.strip().startswith("{"):
         # Try to verify it's properly encrypted and can be decrypted
         try:
             decrypted = Helper.decrypt_database_field(field_value, master_password)
-            
+
             # Check if decryption actually worked
             if not (decrypted != field_value and
                    not decrypted.startswith("{") and
                    len(decrypted) > 0):
-                
+
                 # Try to fix this encrypted field that can't be decrypted
                 if field_name == "private_key":
                     try:
@@ -1140,7 +1206,7 @@ def _repair_encrypted_field(peer_name: str, field_name: str, field_value: str,
                         pass
         except Exception:
             pass
-    
+
     return needs_repair
 
 
@@ -1148,7 +1214,7 @@ def _repair_peer_encryption(peer_data: dict, master_password: str, salt: bytes) 
     """Repair encryption issues for a single peer"""
     peer_name = peer_data.get("name", "unknown")
     needs_repair = False
-    
+
     # Fields that should be encrypted and unencrypted
     encrypted_fields = ["private_key", "ip_address", "allowed_ips", "zip_password"]
     unencrypted_fields = ["name", "public_key", "created_at", "dns", "endpoint"]
@@ -1158,7 +1224,7 @@ def _repair_peer_encryption(peer_data: dict, master_password: str, salt: bytes) 
         if peer_data.get(field_name):
             field_value = peer_data[field_name]
             if isinstance(field_value, str) and field_value.strip().startswith("{"):
-                if _repair_unencrypted_field(peer_name, field_name, field_value, 
+                if _repair_unencrypted_field(peer_name, field_name, field_value,
                                            master_password, peer_data):
                     needs_repair = True
 
@@ -1191,28 +1257,33 @@ def repair_database_encryption(args: argparse.Namespace) -> None:
 
     for peer_row in peers:
         peer = dict(peer_row) if not isinstance(peer_row, dict) else peer_row.copy()
-        
+
         if _repair_peer_encryption(peer, master_password, salt):
             repaired_count += 1
 
     if repaired_count > 0:
-        print(f"Successfully repaired {repaired_count} peer(s) with encryption issues.")
+        logger.info(
+            f"Successfully repaired {repaired_count} peer(s) with encryption issues."
+        )
     else:
-        print("No encryption issues found. All peer data appears to be properly encrypted.")
+        logger.info(
+            "No encryption issues found. All peer data appears to be "
+            "properly encrypted."
+        )
 
 
 def repair_peer_zips(_args: argparse.Namespace) -> None:
     """Regenerate all peer ZIPs to ensure they contain conf, QR, pub, and key files"""
     peers = db.get_all_peers()
     if not peers:
-        print("No peers found.")
+        logger.info("No peers found.")
         return
 
     master_password, _ = get_master_password_and_salt()
     repaired_count = 0
     total_peers = len(peers)
 
-    print(f"Repairing ZIP files for {total_peers} peer(s)...")
+    logger.info(f"Repairing ZIP files for {total_peers} peer(s)...")
 
     for peer_row in peers:
         peer = decrypt_peer_data(peer_row, master_password)
@@ -1220,12 +1291,14 @@ def repair_peer_zips(_args: argparse.Namespace) -> None:
 
         try:
             Helper.generate_client_config(peer_name, db)
-            print(f"  ✓ Repaired ZIP for peer '{peer_name}'")
+            logger.info(f"  ✓ Repaired ZIP for peer '{peer_name}'")
             repaired_count += 1
         except Exception:
-            print(f"  ✗ Failed to repair ZIP for peer '{peer_name}'")
+            logger.error(f"  ✗ Failed to repair ZIP for peer '{peer_name}'")
 
-    print(f"\nCompleted: {repaired_count}/{total_peers} peer ZIP files repaired.")
+    logger.info(
+        f"\nCompleted: {repaired_count}/{total_peers} peer ZIP files repaired."
+    )
 
 
 
@@ -1274,6 +1347,9 @@ def version_command(_args: argparse.Namespace) -> None:
 
 def main() -> None:
     """Main entry point"""
+    # Setup logging first
+    setup_logging()
+    
     parser = argparse.ArgumentParser(
         description=("WireGuard Manager - A modern, secure Python-based CLI "
                     "tool for managing WireGuard VPN servers"),
@@ -1386,7 +1462,8 @@ For more help: {sys.argv[0]} <command> --help
 
     # Sync peers to interface
     sync_parser = subparsers.add_parser(
-        "sync-peers", help="Sync all database peers to running WireGuard interface without restart"
+        "sync-peers",
+        help="Sync all database peers to running WireGuard interface without restart"
     )
     sync_parser.set_defaults(func=sync_peers_to_interface)
 

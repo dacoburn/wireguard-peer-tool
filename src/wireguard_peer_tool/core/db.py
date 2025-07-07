@@ -311,7 +311,9 @@ class DB:
         except Exception:
             return False
 
-    def update_peer_keys(self, peer_name: str, private_key: str, public_key: str) -> bool:
+    def update_peer_keys(
+        self, peer_name: str, private_key: str, public_key: str
+    ) -> bool:
         """Update both private and public keys for a peer"""
         try:
             with self.get_connection() as conn:

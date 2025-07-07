@@ -221,13 +221,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install hatch
         
-    - name: Sync version for production
-      run: python .hooks/sync_version.py
-        
-    - name: Get production version
+    - name: Get production version from git tag
       id: prod_version
       run: |
-        # For production, get the clean version after sync
+        # For production, let hatch-vcs detect version from git tag
         PACKAGE_VERSION=$(hatch version)
         echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> $GITHUB_ENV
         echo "Production version: $PACKAGE_VERSION"

@@ -32,10 +32,13 @@ class ClientConfig:
 class Helper:
     """Helper class for various utility functions"""
     @staticmethod
-    def extract_zip_with_optional_password(zip_file, password=None, required_files=None):
+    def extract_zip_with_optional_password(
+        zip_file, password=None, required_files=None
+    ):
         """
         Try to extract a zip file with no password, then with password if provided.
-        Returns (extracted_without_password, extracted_with_password, found_all, temp_dir, error_message)
+        Returns (extracted_without_password, extracted_with_password, found_all,
+                 temp_dir, error_message)
         """
         temp_dir = tempfile.mkdtemp()
         extracted_with_password = False
@@ -53,23 +56,39 @@ class Helper:
                             zf.extractall(temp_dir)
                             extracted_with_password = True
                         except Exception as e:
-                            error_message = f"Failed to extract {zip_file} with password: {e}"
+                            error_message = (
+                                f"Failed to extract {zip_file} with password: {e}"
+                            )
                     else:
-                        error_message = f"Failed to extract {zip_file}: no password and no default extraction worked."
+                        error_message = (
+                            f"Failed to extract {zip_file}: no password and "
+                            "no default extraction worked."
+                        )
         except (OSError, pyzipper.BadZipFile, pyzipper.LargeZipFile) as e:
             error_message = f"Failed to open {zip_file}: {e}"
 
         found_all = False
         if required_files:
-            found_all = all(os.path.exists(os.path.join(temp_dir, fname)) for fname in required_files)
-        return (extracted_without_password, extracted_with_password, found_all, temp_dir, error_message)
+            found_all = all(
+                os.path.exists(os.path.join(temp_dir, fname))
+                for fname in required_files
+            )
+        return (
+            extracted_without_password, extracted_with_password, found_all,
+            temp_dir, error_message
+        )
 
     @staticmethod
     def create_password_protected_zip(zip_path, files, password):
         """
-        Create a password-protected zip at zip_path with the given files (list of (src, arcname)).
+        Create a password-protected zip at zip_path with the given files
+        (list of (src, arcname)).
         """
-        with pyzipper.AESZipFile(zip_path, "w", compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
+        with pyzipper.AESZipFile(
+            zip_path, "w",
+            compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES
+        ) as zf:
             zf.setpassword(password.encode())
             for src, arcname in files:
                 zf.write(src, arcname=arcname)
@@ -109,7 +128,10 @@ class Helper:
         client_config: str,
         zip_password: str
     ) -> Path:
-        """Create ZIP file containing config, QR code, public key, and private key, using AES encryption."""
+        """
+        Create ZIP file containing config, QR code, public key, and private key,
+        using AES encryption.
+        """
         # Create temporary files for ZIP
         temp_config_path = Helper.create_config(peer_dir, peer_name, client_config)
         temp_qr_path = Helper.create_qr_code(peer_dir, peer_name, client_config)
@@ -118,7 +140,8 @@ class Helper:
         private_key_path = peer_dir / f"{peer_name}.key"
         public_key_path = peer_dir / f"{peer_name}.pub"
 
-        # If config file exists, try to extract private key and create .key/.pub files if missing
+        # If config file exists, try to extract private key and create
+        # .key/.pub files if missing
         if temp_config_path.exists():
             # Read config and extract PrivateKey
             private_key = None
@@ -138,7 +161,8 @@ class Helper:
                         import subprocess
                         result = subprocess.run([
                             "wg", "pubkey"
-                        ], input=private_key, capture_output=True, text=True, check=False)
+                        ], input=private_key, capture_output=True,
+                           text=True, check=False)
                         if result.returncode == 0:
                             public_key = result.stdout.strip()
                             with open(public_key_path, "w", encoding="utf-8") as pubf:
@@ -148,7 +172,11 @@ class Helper:
 
         # Create AES-encrypted ZIP archive using pyzipper
         zip_path = peer_dir / f"{peer_name}.zip"
-        with pyzipper.AESZipFile(zip_path, "w", compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
+        with pyzipper.AESZipFile(
+            zip_path, "w",
+            compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES
+        ) as zf:
             zf.setpassword(zip_password.encode())
             zf.setencryption(pyzipper.WZ_AES, nbits=256)
             zf.write(temp_config_path, f"{peer_name}.conf")
@@ -247,7 +275,8 @@ AllowedIPs = {allowed_ip}
                         current_peer[key] = value
 
         # Append the final peer after the loop
-        if in_peer_section and current_peer is not None and peer_name is not None and current_peer:
+        if (in_peer_section and current_peer is not None and
+            peer_name is not None and current_peer):
             result["peers"][peer_name] = current_peer
         return result
 
@@ -276,7 +305,9 @@ AllowedIPs = {allowed_ip}
             return f.read()
 
     @staticmethod
-    def is_zip_encrypted(master_password, zip_password: Union[str, dict]) -> tuple[bool, bool]:
+    def is_zip_encrypted(
+        master_password, zip_password: Union[str, dict]
+    ) -> tuple[bool, bool]:
         """ Check if a ZIP password is encrypted and valid.
         Returns a tuple (is_encrypted, is_valid)."""
         if master_password:
@@ -288,7 +319,8 @@ AllowedIPs = {allowed_ip}
                     return (True, False)  # encrypted but invalid format
             elif isinstance(zip_password, str):
                 # Check if it's a JSON string representing encrypted data
-                if zip_password.strip().startswith("{") and "data" in zip_password and "salt" in zip_password:
+                if (zip_password.strip().startswith("{") and
+                    "data" in zip_password and "salt" in zip_password):
                     return (True, True)  # encrypted JSON string and valid
                 else:
                     return (False, True)  # not encrypted but valid (plain text)
@@ -299,9 +331,12 @@ AllowedIPs = {allowed_ip}
             return (False, True)  # not encrypted but valid
 
     @staticmethod
-    def handle_zip_password(peer_data, raw_peer_data, master_password, config, peer_name, db_update_callback,
-                           generate_zip_password_func, encrypt_database_field_func, decrypt_database_field_func,
-                           update_allowed=True):
+    def handle_zip_password(
+        peer_data, raw_peer_data, master_password, config, peer_name,
+        db_update_callback, generate_zip_password_func,
+        encrypt_database_field_func, decrypt_database_field_func,
+        update_allowed=True
+    ):
         """
         Handle zip password validation, encryption, and database updates.
         Returns the final zip password (decrypted for display/use).
@@ -312,11 +347,13 @@ AllowedIPs = {allowed_ip}
             master_password: Master password if encryption is enabled
             config: Server config dict
             peer_name: Name of the peer
-            db_update_callback: Function to call for database updates (peer_name, new_password)
+            db_update_callback: Function to call for database updates
+                               (peer_name, new_password)
             generate_zip_password_func: Function to generate new zip passwords
             encrypt_database_field_func: Function to encrypt database fields
             decrypt_database_field_func: Function to decrypt database fields
-            update_allowed: Whether database updates are allowed (False for read-only operations)
+            update_allowed: Whether database updates are allowed
+                           (False for read-only operations)
 
         Returns:
             str: The zip password (decrypted/plain text for use)
@@ -325,7 +362,9 @@ AllowedIPs = {allowed_ip}
         raw_zip_password = raw_peer_data.get("zip_password", "")
 
         # Check if password is valid and encrypted
-        password_is_encrypted, password_is_valid = Helper.is_zip_encrypted(master_password, raw_zip_password)
+        password_is_encrypted, password_is_valid = Helper.is_zip_encrypted(
+            master_password, raw_zip_password
+        )
 
         # Handle completely missing passwords - ONLY CASE WHERE WE GENERATE NEW PASSWORD
         if not raw_zip_password:
@@ -375,9 +414,13 @@ AllowedIPs = {allowed_ip}
         elif password_is_encrypted and password_is_valid and master_password:
             try:
                 if isinstance(raw_zip_password, str):
-                    return decrypt_database_field_func(raw_zip_password, master_password)
+                    return decrypt_database_field_func(
+                        raw_zip_password, master_password
+                    )
                 elif isinstance(raw_zip_password, dict):
-                    return decrypt_database_field_func(json.dumps(raw_zip_password), master_password)
+                    return decrypt_database_field_func(
+                        json.dumps(raw_zip_password), master_password
+                    )
                 else:
                     return "[Decryption Error]"
             except Exception:
@@ -385,7 +428,8 @@ AllowedIPs = {allowed_ip}
 
         # Handle valid but unencrypted passwords when master password is set
         # ONLY ENCRYPT IF update_allowed and actually unencrypted in the database
-        elif password_is_valid and not password_is_encrypted and master_password and update_allowed:
+        elif (password_is_valid and not password_is_encrypted and
+              master_password and update_allowed):
             # Encrypt the existing password and save it (one-time migration)
             salt = config.get("encryption_salt", "")
             if salt:
@@ -402,8 +446,10 @@ AllowedIPs = {allowed_ip}
         return zip_password if zip_password else "[No Password]"
 
     @staticmethod
-    def ensure_zip_password_encryption(zip_password, master_password, config, peer_name, db_update_callback,
-                                     encrypt_database_field_func, decrypt_database_field_func):
+    def ensure_zip_password_encryption(
+        zip_password, master_password, config, peer_name, db_update_callback,
+        encrypt_database_field_func, decrypt_database_field_func
+    ):
         """
         Ensure zip password is properly encrypted if master password is set.
         Used by repair_peer_zips for its specific encryption flow.
@@ -414,7 +460,8 @@ AllowedIPs = {allowed_ip}
         if not master_password or not zip_password:
             return zip_password
 
-        # If encryption is enabled and zip_password is a plain string, encrypt and update DB
+        # If encryption is enabled and zip_password is a plain string,
+        # encrypt and update DB
         if isinstance(zip_password, str):
             zp = zip_password.strip()
             if not (zp.startswith("{") and "data" in zp and "salt" in zp):
@@ -422,7 +469,9 @@ AllowedIPs = {allowed_ip}
                 salt_b64 = config.get("encryption_salt")
                 if salt_b64:
                     salt = base64.b64decode(salt_b64)
-                    encrypted_pw = encrypt_database_field_func(zip_password, master_password, salt)
+                    encrypted_pw = encrypt_database_field_func(
+                        zip_password, master_password, salt
+                    )
                     db_update_callback(peer_name, encrypted_pw)
                 return zip_password
             else:
@@ -431,10 +480,13 @@ AllowedIPs = {allowed_ip}
                     return decrypt_database_field_func(zip_password, master_password)
                 except Exception:
                     return zip_password
-        elif isinstance(zip_password, dict) and "data" in zip_password and "salt" in zip_password:
+        elif (isinstance(zip_password, dict) and "data" in zip_password and
+              "salt" in zip_password):
             # It's an encrypted dict, decrypt it
             try:
-                return decrypt_database_field_func(json.dumps(zip_password), master_password)
+                return decrypt_database_field_func(
+                    json.dumps(zip_password), master_password
+                )
             except Exception:
                 return zip_password
 
@@ -480,7 +532,8 @@ AllowedIPs = {allowed_ip}
             encrypted_data = None
 
             # Try different base64 decoding methods
-            # 1. Try treating as raw Fernet token first (this works for private_key, public_key, zip_password)
+            # 1. Try treating as raw Fernet token first
+            #    (this works for private_key, public_key, zip_password)
             try:
                 fernet_token = encrypted_data_str.encode()
                 decrypted = fernet.decrypt(fernet_token)
@@ -488,7 +541,8 @@ AllowedIPs = {allowed_ip}
             except Exception:
                 pass
 
-            # 2. Try base64 decode then treat as raw Fernet token (this works for ip_address)
+            # 2. Try base64 decode then treat as raw Fernet token
+            #    (this works for ip_address)
             try:
                 decoded_once = base64.b64decode(encrypted_data_str)
                 # The decoded result should be a Fernet token string, use it as bytes
@@ -525,7 +579,9 @@ AllowedIPs = {allowed_ip}
                                     try:
                                         encrypted_data = base64.b64decode(clean_str)
                                     except Exception:
-                                        encrypted_data = base64.urlsafe_b64decode(clean_str)
+                                        encrypted_data = base64.urlsafe_b64decode(
+                                            clean_str
+                                        )
                                 else:
                                     raise
                     else:
@@ -575,9 +631,11 @@ AllowedIPs = {allowed_ip}
                 try:
                     decrypted = Helper.decrypt_data(enc_data, master_password)
                     # Strip any trailing whitespace/newlines from decrypted data
-                    return decrypted.strip() if isinstance(decrypted, str) else decrypted
+                    return (decrypted.strip() if isinstance(decrypted, str)
+                            else decrypted)
                 except Exception:
-                    # If decryption fails, it might be corrupted but we should try to continue
+                    # If decryption fails, it might be corrupted but we should
+                    # try to continue
                     # Return the original data so the tool can still function
                     return enc_json
             else:
@@ -624,6 +682,8 @@ AllowedIPs = {allowed_ip}
         peer_dir.mkdir(parents=True, exist_ok=True)
 
         # Create client config content
+        endpoint = server_config.get("endpoint", "your-server.com")
+        listen_port = server_config.get("listen_port", 51820)
         client_config_content = f"""[Interface]
 PrivateKey = {peer['private_key']}
 Address = {peer['ip_address']}/32
@@ -632,7 +692,7 @@ DNS = {server_config.get('dns_server', '1.1.1.1')}
 [Peer]
 PublicKey = {server_config['public_key']}
 AllowedIPs = 0.0.0.0/0
-Endpoint = {server_config.get('endpoint', 'your-server.com')}:{server_config.get('listen_port', 51820)}
+Endpoint = {endpoint}:{listen_port}
 """
 
         # Write config file
@@ -656,7 +716,9 @@ Endpoint = {server_config.get('endpoint', 'your-server.com')}:{server_config.get
                        (str(qr_file), f"{peer_name}.png"),
                        (str(public_key_file), f"{peer_name}.pub"),
                        (str(private_key_file), f"{peer_name}.key")]
-        Helper.create_password_protected_zip(str(zip_file), files_to_zip, peer["zip_password"])
+        Helper.create_password_protected_zip(
+            str(zip_file), files_to_zip, peer["zip_password"]
+        )
 
         return zip_file
 

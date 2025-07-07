@@ -9,9 +9,16 @@ import json
 VERSION_FILE = pathlib.Path("src/wireguard_peer_tool/_version.py")
 PYPROJECT_FILE = pathlib.Path("pyproject.toml")
 
-VERSION_PATTERN = re.compile(r"__version__\s*=\s*['\"]([^'\"]+)['\"]")
+VERSION_PATTERN = re.compile(r"__version__\s*=\s*.*?['\"]([^'\"]+)['\"]")
 PYPROJECT_PATTERN = re.compile(r'^version\s*=\s*".*"$', re.MULTILINE)
 PYPI_API = "https://test.pypi.org/pypi/wireguard-peer-tool/json"
+
+def clean_version(version: str) -> str:
+    """Clean version string by removing local identifiers and git metadata"""
+    # Remove local version identifier (everything after +)
+    if "+" in version:
+        version = version.split("+")[0]
+    return version
 
 def read_version_from_file(path: pathlib.Path) -> str:
     """Read version from _version.py file"""
@@ -37,7 +44,12 @@ def bump_patch_version(version: str) -> str:
     """Bump the patch version (e.g., 0.1.0 -> 0.1.1)"""
     if ".dev" in version:
         version = version.split(".dev")[0]
+    
     parts = version.split(".")
+    # Ensure we have at least major.minor.patch
+    if len(parts) == 2:
+        parts.append("0")  # Add patch version if missing
+    
     parts[-1] = str(int(parts[-1]) + 1)
     return ".".join(parts)
 
@@ -53,6 +65,12 @@ def fetch_existing_versions() -> set:
 
 def find_next_available_dev_version(base_version: str) -> str:
     """Find the next available .devN version on Test PyPI"""
+    # Ensure base version has proper semantic versioning (major.minor.patch)
+    parts = base_version.split(".")
+    if len(parts) == 2:
+        # If only major.minor, add patch version 0
+        base_version = f"{base_version}.0"
+    
     existing_versions = fetch_existing_versions()
     for i in range(1, 100):
         candidate = f"{base_version}.dev{i}"
@@ -67,7 +85,13 @@ def inject_version(version: str, dev_mode: bool = False):
 
     # Update _version.py
     version_content = VERSION_FILE.read_text()
-    new_version_content = VERSION_PATTERN.sub(f"__version__ = '{version}'", version_content)
+    # Handle both simple and multiple assignment formats
+    if "__version__ = version =" in version_content:
+        # Multiple assignment format: __version__ = version = 'value'
+        new_version_content = re.sub(r"__version__\s*=\s*version\s*=\s*['\"][^'\"]+['\"]", f"__version__ = version = '{version}'", version_content)
+    else:
+        # Simple assignment format: __version__ = 'value'
+        new_version_content = VERSION_PATTERN.sub(f"__version__ = '{version}'", version_content)
     VERSION_FILE.write_text(new_version_content)
 
     # Update pyproject.toml
@@ -84,7 +108,7 @@ def inject_version(version: str, dev_mode: bool = False):
             new_pyproject = PYPROJECT_PATTERN.sub(f'version = "{version}"', pyproject)
         else:
             # Insert version after [project] line
-            new_pyproject = re.sub(r"(\[project\])", rf"\1\nversion = \"{version}\"", pyproject)
+            new_pyproject = re.sub(r"(\[project\])", rf'\1\nversion = "{version}"', pyproject)
         
         # Remove VCS version source if it exists
         new_pyproject = re.sub(r'\[tool\.hatch\.version\]\s*\nsource\s*=\s*"vcs"', '', new_pyproject)
@@ -119,10 +143,14 @@ def inject_version(version: str, dev_mode: bool = False):
 
 def main():
     dev_mode = "--dev" in sys.argv
-    current_version = read_version_from_file(VERSION_FILE)
-    previous_version = read_version_from_git("src/wireguard_peer_tool/_version.py")
+    raw_current_version = read_version_from_file(VERSION_FILE)
+    current_version = clean_version(raw_current_version)
+    
+    raw_previous_version = read_version_from_git("src/wireguard_peer_tool/_version.py")
+    previous_version = clean_version(raw_previous_version) if raw_previous_version else None
 
-    print(f"Current: {current_version}, Previous: {previous_version}")
+    print(f"Current: {current_version} (raw: {raw_current_version})")
+    print(f"Previous: {previous_version} (raw: {raw_previous_version})")
     print(f"Mode: {'DEV' if dev_mode else 'PRODUCTION'}")
 
     if current_version == previous_version:
@@ -135,16 +163,16 @@ def main():
             sys.exit(0)
         else:
             # For production mode, ensure clean version management
-            clean_version = current_version.split(".dev")[0] if ".dev" in current_version else current_version
-            inject_version(clean_version, dev_mode=False)
+            clean_version_str = current_version.split(".dev")[0] if ".dev" in current_version else current_version
+            inject_version(clean_version_str, dev_mode=False)
             print("✅ Production version prepared for release.")
             sys.exit(0)
     else:
         print("✅ Version already bumped — proceeding.")
         if not dev_mode:
             # Ensure production configuration is correct
-            clean_version = current_version.split(".dev")[0] if ".dev" in current_version else current_version
-            inject_version(clean_version, dev_mode=False)
+            clean_version_str = current_version.split(".dev")[0] if ".dev" in current_version else current_version
+            inject_version(clean_version_str, dev_mode=False)
         sys.exit(0)
 
 if __name__ == "__main__":

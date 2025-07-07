@@ -1,10 +1,11 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
+version = "0.1.0.dev1"
 name = "wireguard-peer-tool"
-dynamic = ["version"]
+
 description = "A modern, secure Python-based command-line tool for managing WireGuard VPN server configurations and peers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,11 +62,9 @@ Source = "https://github.com/dacoburn/wireguard-peer-tool"
 wireguard-peer-tool = "wireguard_peer_tool.cli:main"
 wg-peer-tool = "wireguard_peer_tool.cli:main"
 
-[tool.hatch.version]
-source = "vcs"
 
-[tool.hatch.build.hooks.vcs]
-version-file = "src/wireguard_peer_tool/_version.py"
+
+
 
 [tool.hatch.build.targets.sdist]
 exclude = [
